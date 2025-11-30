@@ -8,8 +8,8 @@ from tqdm import tqdm
 DB_CONFIG = {
     'host': 'localhost',
     'user': 'root', 
-    'password': 'deniz',
-    'database': 'alternatif_market_kds' 
+    'password': '',
+    'database': 'alternatif_market_kds'
 }
 
 # --- SİMÜLASYON AYARLARI ---
@@ -82,7 +82,7 @@ def generate_synthetic_data():
                 adet = np.random.randint(1, 5)
             
             base_price = np.random.uniform(10, 200) * base_price_factor
-            birim_fiyat = round(base_price + (np.random.normal(0, 5)), 2)
+            birim_fiyat = round(max(0.01, base_price + (np.random.normal(0, 5))), 2)
             
             item_tutar = round(adet * birim_fiyat, 2)
             total_tutar += item_tutar
@@ -95,7 +95,17 @@ def generate_synthetic_data():
                 adet,
                 birim_fiyat
             ))
-        
+        # Sepet Detaylarını Üretme
+        total_tutar = 0
+        # ... (Tüm loop'lar ve item_tutar hesaplamaları)
+
+        # SATISLAR kaydı (Header)
+        sales_list.append((
+            selected_market_id,
+            round(max(0, total_tutar), 2), # YENİ HALİ: total_tutar negatifse 0 yap
+            transaction_date.strftime('%Y-%m-%d %H:%M:%S'), 
+            int(total_adet)
+        ))
         # SATISLAR kaydı (Header)
         sales_list.append((
             selected_market_id,
