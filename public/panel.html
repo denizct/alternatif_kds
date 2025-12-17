@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Yönetim Paneli</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="dashboard">
+        <header>
+            <h1>Merhaba</h1>
+            <button onclick="logout()" class="logout-btn">Çıkış</button>
+        </header>
+        
+        <div class="content">
+            <h3>Hızlı Raporlar</h3>
+            <button onclick="getMarketReport()">En İyi 5 Market Raporunu Getir</button>
+            
+            <div id="reportResult" class="report-box" style="display:none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Market Adı</th>
+                            <th>Toplam Ciro (TL)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportTableBody">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
