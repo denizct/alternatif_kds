@@ -14,8 +14,8 @@ DB_CONFIG = {
 
 # --- SİMÜLASYON AYARLARI ---
 NUM_TRANSACTIONS = 15000  # İşlem sayısı
-START_DATE = datetime(2023, 1, 1) 
-END_DATE = datetime(2024, 12, 31) 
+START_DATE = datetime(2024, 1, 1) 
+END_DATE = datetime(2026, 6, 1) 
 DATE_RANGE = (END_DATE - START_DATE).days
 
 def generate_synthetic_data():

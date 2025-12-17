@@ -1,35 +1,167 @@
 <!DOCTYPE html>
 <html lang="tr">
+
 <head>
     <meta charset="UTF-8">
-    <title>Yönetim Paneli</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alternatif KDS - Yönetim Paneli</title>
     <link rel="stylesheet" href="style.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
-    <div class="dashboard">
-        <header>
-            <h1>Merhaba</h1>
-            <button onclick="logout()" class="logout-btn">Çıkış</button>
-        </header>
-        
-        <div class="content">
-            <h3>Hızlı Raporlar</h3>
-            <button onclick="getMarketReport()">En İyi 5 Market Raporunu Getir</button>
-            
-            <div id="reportResult" class="report-box" style="display:none;">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Market Adı</th>
-                            <th>Toplam Ciro (TL)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="reportTableBody">
-                        </tbody>
-                </table>
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div style="margin-bottom: 40px;">
+                <h2 style="margin-bottom: 0;">ALTERNATİF KDS</h2>
+                <small style="color: grey;">v1.0.0</small>
             </div>
-        </div>
+            <nav>
+                <a href="#" class="menu-item active" onclick="switchView('view-home', this)">📊 Genel Bakış</a>
+                <a href="#" class="menu-item" onclick="switchView('view-sales', this)">📈 Satış Analizi</a>
+                <a href="#" class="menu-item" onclick="switchView('view-products', this)">📦 Ürün Analizi</a>
+            </nav>
+            <button onclick="logout()" class="logout-btn">Çıkış Yap</button>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="header">
+                <div class="welcome-text">
+                    <h1 id="welcomeUser">Hoşgeldiniz, Yönetici</h1>
+                    <p>Karar Destek Sistemi Paneli</p>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="filter-bar" style="border-bottom: 1px solid #333; padding-bottom: 20px;">
+                <div class="filter-group">
+                    <label>Dönem Seçimi</label>
+                    <select id="periodFilter" onchange="updateDashboard()">
+                        <option value="12" selected>Son 12 Ay</option>
+                        <option value="6">Son 6 Ay</option>
+                        <option value="9">Son 9 Ay</option>
+                        <option value="2025">2025</option>
+                        <option value="2024">2024</option>
+                        <option value="2023">2023</option>
+                        <option value="all">Tüm Zamanlar</option>
+                    </select>
+                </div>
+                <!-- Global Refresh Button -->
+                <div class="filter-group">
+                    <button onclick="updateDashboard()"
+                        style="background: var(--accent-color); border:none; padding:10px 20px; border-radius:6px; font-weight:600; cursor:pointer; color:#000;">Yenile</button>
+                </div>
+            </div>
+
+            <!-- VIEW 1: HOME (GENEL BAKIŞ) -->
+            <div id="view-home" class="view-section">
+                <!-- KPI Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-title">Toplam Ciro</div>
+                        <div class="stat-value" id="totalRevenue">₺0.00</div>
+                        <div class="stat-trend" id="revenuePeriodLabel">Son 12 Ay</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-title">Tahmini Kar (%25)</div>
+                        <div class="stat-value" id="totalProfit" style="color: var(--success-color);">₺0.00</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-title">En İyi Şube</div>
+                        <div class="stat-value" id="bestBranch" style="font-size: 20px;">-</div>
+                    </div>
+                </div>
+
+                <!-- Main Forecast Chart -->
+                <div class="chart-container">
+                    <h3>Satış Trendi ve Gelecek Tahmini</h3>
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+
+            <!-- VIEW 2: SALES ANALYSIS (SATIŞ ANALİZİ) -->
+            <div id="view-sales" class="view-section" style="display:none;">
+                <div class="filter-bar">
+                    <div class="filter-group">
+                        <label>Şehir</label>
+                        <select id="cityFilter">
+                            <option value="all">Tüm Şehirler</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Market / Şube</label>
+                        <select id="marketFilter">
+                            <option value="all">Tüm Şubeler</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" style="justify-content: flex-end;">
+                        <button onclick="updateDashboard()"
+                            style="background: var(--accent-color); border:none; padding:8px 16px; border-radius:6px; font-weight:600; cursor:pointer;">Filtrele</button>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <h3>Şehir Bazlı Satış Dağılımı</h3>
+                        <canvas id="cityChart"></canvas>
+                    </div>
+                    <!-- Empty for layout balance or another chart -->
+                </div>
+
+                <div class="chart-container" style="margin-top: 24px;">
+                    <h3>Tüm Şubelerin Performans Karşılaştırması</h3>
+                    <div style="height: 400px; overflow-x: auto;">
+                        <canvas id="branchChart" style="min-width: 1000px;"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIEW 3: PRODUCT ANALYSIS (ÜRÜN ANALİZİ) -->
+            <div id="view-products" class="view-section" style="display:none;">
+                <div class="filter-bar">
+                    <div class="filter-group">
+                        <label>Kategori</label>
+                        <select id="categoryFilter">
+                            <option value="all">Tüm Kategoriler</option>
+                        </select>
+                    </div>
+                    <button onclick="updateDashboard()"
+                        style="background: var(--accent-color); border:none; padding:8px 16px; border-radius:6px; font-weight:600; cursor:pointer;">Filtrele</button>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <h3>Kategori Dağılımı</h3>
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>En Çok Satan Ürünler (Top 20)</h3>
+                        <div style="overflow-x:auto; max-height: 400px;">
+                            <table style="width:100%; text-align:left; border-collapse: collapse; margin-top:10px;">
+                                <thead>
+                                    <tr style="border-bottom:1px solid #444; color:#888;">
+                                        <th style="padding:10px;">Ürün</th>
+                                        <th style="padding:10px;">Kat.</th>
+                                        <th style="padding:10px;">Adet</th>
+                                        <th style="padding:10px;">Ciro</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="topProductsBody">
+                                    <!-- JS will fill here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
     </div>
-    <script src="script.js"></script>
+
+    <script src="script.js?v=2"></script>
 </body>
+
 </html>
