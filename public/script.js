@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
             window.location.href = 'index.html';
             return;
         }
-        document.getElementById('welcomeUser').innerText = `Hoşgeldiniz, ${user}`;
+        document.getElementById('welcomeUser').innerText = `Merhaba`;
 
         initDashboard();
     }
@@ -83,7 +83,7 @@ async function loadTopProducts(query) {
         const data = await res.json();
 
         const tbody = document.getElementById('topProductsBody');
-        if (!tbody) return; // if not on product page or element missing
+        if (!tbody) return data; // Return data even if element missing
         tbody.innerHTML = '';
 
         const fmt = new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' });
@@ -100,8 +100,11 @@ async function loadTopProducts(query) {
             tbody.appendChild(tr);
         });
 
+        return data; // Return for use in other charts
+
     } catch (err) {
         console.error('Top Products error:', err);
+        return [];
     }
 }
 
@@ -177,8 +180,10 @@ async function updateDashboard() {
 
     loadStats(query);
     loadTrendChart(query, period);
-    loadBreakdownCharts(query);
-    loadTopProducts(query);
+
+    // We need product data for the pie chart if category is selected
+    const productData = await loadTopProducts(query);
+    loadBreakdownCharts(query, productData);
 }
 
 // Helper to get text for period label
@@ -196,8 +201,10 @@ async function loadStats(query) {
         const fmt = new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' });
 
         document.getElementById('totalRevenue').innerText = fmt.format(data.toplam_ciro);
-        document.getElementById('totalProfit').innerText = fmt.format(data.toplam_kar);
-        // Sales count removed as requested
+
+        // Updated to Best Product
+        document.getElementById('bestProduct').innerText = data.en_cok_satan_urun;
+
         document.getElementById('bestBranch').innerText = data.en_iyi_sube;
 
         // Update Label
@@ -208,32 +215,129 @@ async function loadStats(query) {
         console.error(err);
     }
 }
+// 2. Trend Chart (History only as requested "Sales Trend")
+async function loadTrendChart(query, period) {
+    try {
+        // We only fetch history now since title is "Sales Trend" and user wants to see selected period
+        const resHistory = await fetch(`${API_URL}/dashboard/sales-over-time${query}`);
+        const historyData = await resHistory.json();
 
-let cityChartInstance = null;
+        const ctx = document.getElementById('trendChart').getContext('2d');
+
+        const labels = historyData.map(h => h.ay);
+        const historyValues = historyData.map(h => parseFloat(h.toplam_ciro));
+
+        if (trendChartInstance) trendChartInstance.destroy();
+
+        trendChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Satış Ciro',
+                        data: historyValues,
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: 'white' } },
+                    tooltip: { mode: 'index', intersect: false },
+                    datalabels: { display: false }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                },
+                scales: {
+                    x: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
+                    y: { grid: { color: '#333' }, ticks: { color: '#aaa' } }
+                }
+            }
+        });
+
+    } catch (err) {
+        console.error('Trend Chart Error:', err);
+    }
+}
+
+// Register the plugin if available
+if (typeof ChartDataLabels !== 'undefined') {
+    Chart.register(ChartDataLabels);
+}
 
 // 3. Breakdown Charts (Pie, Bar, City Bar)
-async function loadBreakdownCharts(query) {
+async function loadBreakdownCharts(query, productData = null) {
     try {
         const res = await fetch(`${API_URL}/dashboard/breakdown${query}`);
         const data = await res.json();
 
-        // CATEGORY PIE CHART
+        // CATEGORY PIE CHART LOGIC
+        // If a Category is selected in the filter, we show Product Distribution instead!
+        const categoryFilter = document.getElementById('categoryFilter').value;
+        const isCategorySelected = categoryFilter && categoryFilter !== 'all';
+
+        let pieLabels = [];
+        let pieData = [];
+        let pieTitle = 'Kategori Dağılımı';
+
+        if (isCategorySelected && productData && productData.length > 0) {
+            // Show Products
+            pieTitle = 'Ürün Dağılımı';
+            pieLabels = productData.map(p => p.urun_ad);
+            pieData = productData.map(p => parseFloat(p.toplam_ciro));
+        } else {
+            // Show Categories
+            pieLabels = data.categories.map(c => c.kategori_ad);
+            pieData = data.categories.map(c => parseFloat(c.ciro));
+        }
+
+        // Update Chart Title in DOM if possible (optional, but good for UX)
+        // Finding h3 above canvas logic could go here, but omitted for simplicity unless user asked.
+
         const ctxCat = document.getElementById('categoryChart');
         if (ctxCat) {
             if (categoryChartInstance) categoryChartInstance.destroy();
+
+            const sum = pieData.reduce((a, b) => a + b, 0);
+
             categoryChartInstance = new Chart(ctxCat.getContext('2d'), {
                 type: 'doughnut',
                 data: {
-                    labels: data.categories.map(c => c.kategori_ad),
+                    labels: pieLabels,
                     datasets: [{
-                        data: data.categories.map(c => c.ciro),
-                        backgroundColor: ['#00d4ff', '#ff0055', '#00ff9d', '#ffb700', '#9d00ff', '#ff5722'],
+                        data: pieData,
+                        backgroundColor: [
+                            '#00d4ff', '#ff0055', '#00ff9d', '#ffb700', '#9d00ff', '#ff5722',
+                            '#00bcd4', '#e91e63', '#4caf50', '#ffc107', '#673ab7', '#ff9800',
+                            '#03a9f4', '#f44336', '#8bc34a', '#ffeb3b', '#3f51b5', '#ff5722' // More colors for products
+                        ],
                         borderWidth: 0
                     }]
                 },
                 options: {
                     responsive: true,
-                    plugins: { legend: { position: 'right', labels: { color: 'white' } } }
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right', labels: { color: 'white' } },
+                        datalabels: {
+                            color: '#fff',
+                            font: { weight: 'bold', size: 12 },
+                            formatter: (value, ctx) => {
+                                if (sum === 0) return '0%';
+                                let percentage = ((value / sum) * 100).toFixed(1) + "%";
+                                return percentage;
+                            },
+                        }
+                    }
                 }
             });
         }
@@ -248,7 +352,7 @@ async function loadBreakdownCharts(query) {
                     labels: data.markets.map(m => m.market_ad),
                     datasets: [{
                         label: 'Ciro',
-                        data: data.markets.map(m => m.ciro),
+                        data: data.markets.map(m => parseFloat(m.ciro)),
                         backgroundColor: '#00ff9d',
                         borderRadius: 4
                     }]
@@ -256,7 +360,10 @@ async function loadBreakdownCharts(query) {
                 options: {
                     responsive: true,
                     maintainAspectRatio: false, // For scroll
-                    plugins: { legend: { display: false } },
+                    plugins: {
+                        legend: { display: false },
+                        datalabels: { display: false } // Disable numbers on chart
+                    },
                     scales: {
                         y: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
                         x: { grid: { display: false }, ticks: { color: '#aaa', autoSkip: false, maxRotation: 90 } }
@@ -265,31 +372,7 @@ async function loadBreakdownCharts(query) {
             });
         }
 
-        // CITY CHART (NEW)
-        const ctxCity = document.getElementById('cityChart');
-        if (ctxCity) {
-            if (cityChartInstance) cityChartInstance.destroy();
-            cityChartInstance = new Chart(ctxCity.getContext('2d'), {
-                type: 'bar', // Horizontal bar maybe better? Let's stick to bar
-                data: {
-                    labels: data.cities.map(c => c.sehir_ad),
-                    datasets: [{
-                        label: 'Ciro',
-                        data: data.cities.map(c => c.ciro),
-                        backgroundColor: '#ffb700',
-                        borderRadius: 6
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        y: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
-                        x: { grid: { display: false }, ticks: { color: '#aaa' } }
-                    }
-                }
-            });
-        }
+        // CITY CHART REMOVED
 
     } catch (err) {
         console.error(err);

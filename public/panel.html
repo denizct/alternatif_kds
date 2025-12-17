@@ -8,9 +8,10 @@
     <link rel="stylesheet" href="style.css">
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 </head>
 
-<body>
+<body class="dashboard-page">
     <div class="dashboard-container">
         <!-- Sidebar -->
         <aside class="sidebar">
@@ -66,8 +67,9 @@
                         <div class="stat-trend" id="revenuePeriodLabel">Son 12 Ay</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-title">Tahmini Kar (%25)</div>
-                        <div class="stat-value" id="totalProfit" style="color: var(--success-color);">₺0.00</div>
+                        <div class="stat-title">En Çok Satılan Ürün</div>
+                        <div class="stat-value" id="bestProduct" style="color: var(--warning-color); font-size: 24px;">-
+                        </div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-title">En İyi Şube</div>
@@ -77,8 +79,10 @@
 
                 <!-- Main Forecast Chart -->
                 <div class="chart-container">
-                    <h3>Satış Trendi ve Gelecek Tahmini</h3>
-                    <canvas id="trendChart"></canvas>
+                    <h3>Satış Trendi</h3>
+                    <div style="position: relative; height: 350px; width: 100%;">
+                        <canvas id="trendChart"></canvas>
+                    </div>
                 </div>
             </div>
 
@@ -104,11 +108,7 @@
                 </div>
 
                 <div class="charts-grid">
-                    <div class="chart-container">
-                        <h3>Şehir Bazlı Satış Dağılımı</h3>
-                        <canvas id="cityChart"></canvas>
-                    </div>
-                    <!-- Empty for layout balance or another chart -->
+                    <!-- City Chart Removed as requested -->
                 </div>
 
                 <div class="chart-container" style="margin-top: 24px;">
@@ -135,10 +135,12 @@
                 <div class="charts-grid">
                     <div class="chart-container">
                         <h3>Kategori Dağılımı</h3>
-                        <canvas id="categoryChart"></canvas>
+                        <div style="position: relative; height: 350px; width: 100%;">
+                            <canvas id="categoryChart"></canvas>
+                        </div>
                     </div>
                     <div class="chart-container">
-                        <h3>En Çok Satan Ürünler (Top 20)</h3>
+                        <h3>En Çok Satan Ürünler</h3>
                         <div style="overflow-x:auto; max-height: 400px;">
                             <table style="width:100%; text-align:left; border-collapse: collapse; margin-top:10px;">
                                 <thead>

@@ -72,20 +72,36 @@ app.get('/api/dashboard/stats', (req, res) => {
         LIMIT 1
     `;
 
+    const sqlBestProduct = `
+        SELECT u.urun_ad, SUM(sd.adet) as toplam_adet
+        FROM SatisDetay sd
+        JOIN Satislar s ON sd.satis_id = s.satis_id
+        JOIN Urunler u ON sd.urun_id = u.urun_id
+        ${dateFilter}
+        GROUP BY u.urun_id
+        ORDER BY toplam_adet DESC
+        LIMIT 1
+    `;
+
     db.query(sqlTotal, (err, totalResults) => {
         if (err) return res.status(500).json({ error: err });
 
         db.query(sqlTopMarket, (err, topMarketResults) => {
             if (err) return res.status(500).json({ error: err });
 
-            const ciro = totalResults[0].toplam_ciro || 0;
-            const kar = ciro * 0.25;
+            db.query(sqlBestProduct, (err, bestProductResults) => {
+                if (err) return res.status(500).json({ error: err });
 
-            res.json({
-                toplam_ciro: ciro,
-                toplam_kar: kar,
-                toplam_satis_adedi: totalResults[0].toplam_satis_adedi || 0,
-                en_iyi_sube: topMarketResults.length > 0 ? topMarketResults[0].market_ad : '-'
+                const ciro = totalResults[0].toplam_ciro || 0;
+                // const kar = ciro * 0.25; // Removed profit calculation as it is replaced by Best Product
+
+                res.json({
+                    toplam_ciro: ciro,
+                    // toplam_kar: kar, // No longer needed for UI but keeping field empty if safer, or just omit
+                    toplam_satis_adedi: totalResults[0].toplam_satis_adedi || 0,
+                    en_iyi_sube: topMarketResults.length > 0 ? topMarketResults[0].market_ad : '-',
+                    en_cok_satan_urun: bestProductResults.length > 0 ? bestProductResults[0].urun_ad : '-'
+                });
             });
         });
     });
@@ -116,8 +132,13 @@ app.get('/api/dashboard/sales-over-time', (req, res) => {
     let whereClauses = [];
     if (ay) {
         if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
-        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
+        else if (ay !== 'all') {
+            whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
+        }
     }
+
+    // Ensure we don't show future data for historical trends
+    whereClauses.push('s.tarih <= NOW()');
 
     if (sehir_id && sehir_id !== 'all') whereClauses.push(`m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`);
     if (market_id && market_id !== 'all') whereClauses.push(`s.market_id = ${mysql.escape(market_id)}`);
