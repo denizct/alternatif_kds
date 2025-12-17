@@ -1,4 +1,4 @@
--- MySQL CREATE TABLE Komutları (Güncel ve Normalleştirilmiş)
+-- ALTERNATİF MARKET KDS - VERİTABANI ŞEMASI
 
 -- 1. SEHIRLER TABLOSU
 CREATE TABLE Sehirler (
@@ -14,21 +14,22 @@ CREATE TABLE Ilceler (
     FOREIGN KEY (sehir_id) REFERENCES Sehirler (sehir_id)
 );
 
--- 3. KATEGORILER TABLOSU (NORMALLEŞTİRİLDİ)
+-- 3. KATEGORILER TABLOSU
 CREATE TABLE Kategoriler (
     kategori_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     kategori_ad VARCHAR(50) NOT NULL UNIQUE
 );
 
--- 4. URUNLER TABLOSU (GÜNCELLENDİ)
+-- 4. URUNLER TABLOSU
 CREATE TABLE Urunler (
     urun_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     urun_ad VARCHAR(100) NOT NULL,
     kategori_id INT NOT NULL,
+    stok INT DEFAULT 100,
     FOREIGN KEY (kategori_id) REFERENCES Kategoriler (kategori_id)
 );
 
--- 5. MARKETLER TABLOSU (Şubeler)
+-- 5. MARKETLER TABLOSU
 CREATE TABLE Marketler (
     market_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     market_ad VARCHAR(100) NOT NULL,
@@ -37,7 +38,15 @@ CREATE TABLE Marketler (
     FOREIGN KEY (ilce_id) REFERENCES Ilceler (ilce_id)
 );
 
--- 6. SATISLAR TABLOSU (Ana İşlem Başlığı)
+-- 6. YONETICILER TABLOSU
+CREATE TABLE Yoneticiler (
+    yonetici_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    ad_soyad VARCHAR(100) NOT NULL,
+    kullanici_adi VARCHAR(50) NOT NULL UNIQUE,
+    sifre VARCHAR(50) NOT NULL
+);
+
+-- 7. SATISLAR TABLOSU
 CREATE TABLE Satislar (
     satis_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     market_id INT NOT NULL,
@@ -47,7 +56,7 @@ CREATE TABLE Satislar (
     FOREIGN KEY (market_id) REFERENCES Marketler (market_id)
 );
 
--- 7. SATIS DETAY TABLOSU (Her bir ürün satırının detayı)
+-- 8. SATIS DETAY TABLOSU
 CREATE TABLE SatisDetay (
     satis_detay_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     satis_id BIGINT NOT NULL,
