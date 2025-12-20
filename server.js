@@ -14,7 +14,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // VERİTABANI BAĞLANTISI
 const db = mysql.createConnection({
-    host: 'localhost',
+    host: '127.0.0.1',
     user: 'root',
     password: '', // Şifren varsa buraya yaz
     database: 'alternatif_market_kds'
