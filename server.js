@@ -229,11 +229,10 @@ app.get('/api/dashboard/breakdown', (req, res) => {
     });
 });
 
-// 6. GELECEK TAHMİNİ (FORECAST) API
-app.get('/api/dashboard/forecast', (req, res) => {
-    // Forecast her zaman geçmiş 12-24 aya bakarak yapılır, 
-    // Kullanıcının seçtiği filtreye göre değil, genel trende göre çalışmalı.
 
+// 6. GELECEK TAHMİNİ (FORECAST) API - GELİŞMİŞ
+// Mantık: Basit Regresyon yerine Mevsimsellik + CAGR (Yıllık Büyüme)
+app.get('/api/dashboard/forecast', (req, res) => {
     const sqlHistory = `
         SELECT 
             DATE_FORMAT(s.tarih, '%Y-%m') as ay, 
@@ -246,63 +245,219 @@ app.get('/api/dashboard/forecast', (req, res) => {
 
     db.query(sqlHistory, (err, history) => {
         if (err) return res.status(500).json({ error: err });
-        if (history.length < 2) return res.json([{ ay: 'Veri Yok', tahmini_ciro: 0 }]);
+        
+        // Veri yetersizse
+        if (history.length < 12) {
+            return res.json({ 
+                history: history, 
+                forecast: [], 
+                recommendation: "Yeterli veri yok. En az 12 aylık veri gerekli." 
+            });
+        }
 
-        // Basit Büyüme Oranı Hesabı
-        let lastRevenue = parseFloat(history[history.length - 1].toplam_ciro);
-        let avgGrowth = 0.02; // Default %2 büyüme
+        // 1. CAGR (Yıllık Büyüme Oranı) Hesapla
+        // Son 12 ayın cirosu vs Önceki 12 ayın cirosu
+        let last12Months = history.slice(-12);
+        let previous12Months = history.slice(-24, -12);
+        
+        // Eğer 24 ay yoksa, sadece son aylara bakarak basit trend çıkaracağız
+        let growthRate = 0.05; // Varsayılan %5
+        
+        if (previous12Months.length > 0) {
+            const sumLast = last12Months.reduce((a, b) => a + parseFloat(b.toplam_ciro), 0);
+            const sumPrev = previous12Months.reduce((a, b) => a + parseFloat(b.toplam_ciro), 0);
+            if (sumPrev > 0) growthRate = (sumLast - sumPrev) / sumPrev;
+        }
 
+        // 2. Mevsimsellik İndeksi (Basitleştirilmiş)
+        // Her ayın önceki yılın aynı ayına göre oranı
+        // Biz burada basitçe son yılın trendine büyüme oranını ekleyeceğiz.
+        
         let forecastData = [];
         let currentDate = new Date();
+        let formattedHistory = history.map(h => ({ ay: h.ay, ciro: parseFloat(h.toplam_ciro) }));
 
-        for (let i = 1; i <= 6; i++) { // Gelecek 6 ay
-            lastRevenue = lastRevenue * (1 + avgGrowth);
-            currentDate.setMonth(currentDate.getMonth() + 1);
-            let dateStr = currentDate.toISOString().slice(0, 7);
-
-            forecastData.push({ ay: dateStr, tahmini_ciro: lastRevenue });
+        let recommendation = "";
+        if (growthRate < 0) {
+            recommendation = "DİKKAT: Satışlarda yıllık bazda düşüş var. Stok maliyetlerini düşürün ve verimsiz ürünleri temizleyin.";
+        } else if (growthRate > 0.20) {
+            recommendation = "BÜYÜME: Güçlü büyüme trendi. Stok seviyelerini artırın ve popüler ürünlere kampanya yapın.";
+        } else {
+            recommendation = "STABİL: Dengeli büyüme. Mevcut stratejiyi koruyun, müşteri sadakatine odaklanın.";
         }
-        res.json(forecastData);
+
+        for (let i = 1; i <= 6; i++) { // 6 Ay İleri
+            // Geçen yılın aynı ayını bul
+            // Basit tahmin: Son ay * (1 + aylık_ortalama_değişim) yerine
+            // Seasonal yaklaşım: Geçen yılın aynı ayı * (1 + Yıllık_Büyüme)
+            
+            let targetDate = new Date();
+            targetDate.setMonth(targetDate.getMonth() + i);
+            let monthStr = targetDate.toISOString().slice(5, 7); // "05"
+
+            // Geçmiş veride bu ayı bul (en son yılın verisi)
+            let pastMonthData = last12Months.find(d => d.ay.endsWith(monthStr));
+            let baseVal = pastMonthData ? parseFloat(pastMonthData.toplam_ciro) : (formattedHistory[formattedHistory.length-1].ciro);
+
+            let forecastVal = baseVal * (1 + growthRate);
+
+            // Hafif rassallık/noise ekle (gerçekçi görünüm için)
+            // forecastVal = forecastVal * (0.95 + Math.random() * 0.10); 
+
+            let dateStr = targetDate.toISOString().slice(0, 7);
+            forecastData.push({ ay: dateStr, tahmini_ciro: forecastVal });
+        }
+
+        res.json({
+            history: formattedHistory,
+            forecast: forecastData,
+            growthRate: (growthRate * 100).toFixed(1),
+            recommendation: recommendation
+        });
     });
 });
 
-// 7. EN ÇOK SATAN ÜRÜNLER (Top Products)
-app.get('/api/dashboard/top-products', (req, res) => {
-    const { ay, kategori_id } = req.query;
-    let whereClauses = [];
-
-    if (ay) {
-        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
-        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
-    }
-
-    if (kategori_id && kategori_id !== 'all') {
-        whereClauses.push(`u.kategori_id = ${mysql.escape(kategori_id)}`);
-    }
-
-    const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
-
+// 8. STRATEJİK: ŞUBE PERFORMANS MATRİSİ (Kapatma/İyileştirme Kararı)
+app.get('/api/strategic/branch-performance', (req, res) => {
+    // Kriter: Şube Cirosu vs Şehir Ortalaması
+    // Kriter: Sepet Ortalaması (Ciro / Adet)
+    
     const sql = `
         SELECT 
-            u.urun_ad, 
-            k.kategori_ad,
-            SUM(sd.adet) as toplam_adet,
-            SUM(sd.adet * sd.birim_fiyat) as toplam_ciro
-        FROM SatisDetay sd
-        JOIN Satislar s ON sd.satis_id = s.satis_id
-        JOIN Urunler u ON sd.urun_id = u.urun_id
-        JOIN Kategoriler k ON u.kategori_id = k.kategori_id
-        ${whereSql}
-        GROUP BY u.urun_id, u.urun_ad, k.kategori_ad
-        ORDER BY toplam_ciro DESC
-        LIMIT 20
+            m.market_ad,
+            s_sehir.sehir_ad,
+            SUM(s.tutar) as toplam_ciro,
+            COUNT(s.satis_id) as islem_sayisi,
+            SUM(s.tutar) / COUNT(s.satis_id) as sepet_ortalamasi
+        FROM Satislar s
+        JOIN Marketler m ON s.market_id = m.market_id
+        JOIN Ilceler i ON m.ilce_id = i.ilce_id
+        JOIN Sehirler s_sehir ON i.sehir_id = s_sehir.sehir_id
+        WHERE s.tarih >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
+        GROUP BY m.market_id, m.market_ad, s_sehir.sehir_ad, s_sehir.sehir_id
     `;
 
-    db.query(sql, (err, results) => {
+    db.query(sql, (err, branches) => {
         if (err) return res.status(500).json({ error: err });
+
+        // Şehir Ortalamalarını Hesapla
+        let cityStats = {};
+        branches.forEach(b => {
+            if (!cityStats[b.sehir_ad]) cityStats[b.sehir_ad] = { total: 0, count: 0 };
+            cityStats[b.sehir_ad].total += parseFloat(b.toplam_ciro);
+            cityStats[b.sehir_ad].count += 1;
+        });
+
+        let results = branches.map(b => {
+            let ciro = parseFloat(b.toplam_ciro);
+            let cityAvg = cityStats[b.sehir_ad].total / cityStats[b.sehir_ad].count;
+            
+            let efficiencyScore = (ciro / cityAvg) * 100; // 100 = Ortalama, <70 Kötü
+            let recommendation = "NORMAL";
+            let status = "success"; // color code
+
+            if (efficiencyScore < 70) {
+                recommendation = "KAPATMA/KÜÇÜLME DEĞERLENDİRİLMELİ";
+                status = "danger";
+            } else if (efficiencyScore < 90) {
+                recommendation = "İZLENMELİ - Kampanya Desteği Gerekli";
+                status = "warning";
+            } else if (efficiencyScore > 130) {
+                recommendation = "YILDIZ ŞUBE - Ödüllendirilmeli";
+                status = "info";
+            }
+
+            return {
+                market_ad: b.market_ad,
+                sehir: b.sehir_ad,
+                ciro: ciro,
+                sepet_ort: parseFloat(b.sepet_ortalamasi),
+                verimlilik: efficiencyScore.toFixed(0),
+                recommendation: recommendation,
+                status: status
+            };
+        });
+
+        // Verimliliğe göre sırala (Düşükten yükseğe - sorunlular en üstte)
+        results.sort((a, b) => a.verimlilik - b.verimlilik);
+
         res.json(results);
     });
 });
+
+// 9. STRATEJİK: LOKASYON ANALİZİ (Yeni Şube Fırsatları)
+app.get('/api/strategic/location-analysis', (req, res) => {
+    // Mantık: İlçe Cirosu / Şube Sayısı = Şube Başına Düşen Ciro
+    // Eğer Şube Başı Ciro çok yüksekse -> Doygunluk düşük -> Yeni şube açılabilir
+    
+    const sql = `
+        SELECT 
+            i.ilce_ad,
+            s_sehir.sehir_ad,
+            COUNT(DISTINCT m.market_id) as sube_sayisi,
+            SUM(s.tutar) as toplam_bolge_cirosu
+        FROM Satislar s
+        JOIN Marketler m ON s.market_id = m.market_id
+        JOIN Ilceler i ON m.ilce_id = i.ilce_id
+        JOIN Sehirler s_sehir ON i.sehir_id = s_sehir.sehir_id
+        WHERE s.tarih >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        GROUP BY i.ilce_id, i.ilce_ad, s_sehir.sehir_ad
+    `;
+
+    db.query(sql, (err, districts) => {
+        if (err) return res.status(500).json({ error: err });
+
+        // Genel Ortalama (Şube Başı Ciro) - Referans için
+        let totalRevenue = 0;
+        let totalBranches = 0;
+        districts.forEach(d => {
+            totalRevenue += parseFloat(d.toplam_bolge_cirosu);
+            totalBranches += d.sube_sayisi;
+        });
+        let globalAvgPerBranch = totalBranches > 0 ? (totalRevenue / totalBranches) : 0;
+
+        let results = districts.map(d => {
+            let revenue = parseFloat(d.toplam_bolge_cirosu);
+            let avgRevPerBranch = revenue / d.sube_sayisi;
+            
+            // Potansiyel Skoru: (Bölge Ortalaması / Genel Ortalama)
+            // Eğer bölgedeki şubeler genel ortalamanın %150'si kadar ciro yapıyorsa, 
+            // demek ki orada talep çok, ama şube az.
+            let potentialScore = (avgRevPerBranch / globalAvgPerBranch) * 100;
+
+            let recommendation = "Nötr";
+            let signal = "secondary"; // grey
+
+            if (potentialScore > 140) {
+                recommendation = "YÜKSEK POTANSİYEL - Yeni Şube Aç!";
+                signal = "success"; // green
+            } else if (potentialScore > 110) {
+                recommendation = "FIRSAT OLABİLİR";
+                signal = "info"; // blue
+            } else if (potentialScore < 60) {
+                recommendation = "DOYGUN PAZAR - Yatırım Yapma";
+                signal = "danger"; // red
+            }
+
+            return {
+                ilce: d.ilce_ad,
+                sehir: d.sehir_ad,
+                sube_sayisi: d.sube_sayisi,
+                bolge_cirosu: revenue,
+                sube_basi_ciro: avgRevPerBranch,
+                potansiyel_skoru: potentialScore.toFixed(0),
+                recommendation: recommendation,
+                signal: signal
+            };
+        });
+
+        // En yüksek potansiyel en üstte
+        results.sort((a, b) => b.potansiyel_skoru - a.potansiyel_skoru);
+
+        res.json(results);
+    });
+});
+
 
 // Ana sayfa yönlendirmesi
 app.get('/', (req, res) => {

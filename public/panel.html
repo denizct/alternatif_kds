@@ -23,6 +23,7 @@
                 <a href="#" class="menu-item active" onclick="switchView('view-home', this)">📊 Genel Bakış</a>
                 <a href="#" class="menu-item" onclick="switchView('view-sales', this)">📈 Satış Analizi</a>
                 <a href="#" class="menu-item" onclick="switchView('view-products', this)">📦 Ürün Analizi</a>
+                <a href="#" class="menu-item" onclick="switchView('view-strategic', this)">⚡ Stratejik Planlama</a>
             </nav>
             <button onclick="logout()" class="logout-btn">Çıkış Yap</button>
         </aside>
@@ -157,6 +158,65 @@
                             </table>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- VIEW 4: STRATEGIC PLANNING (STRATEJİK PLANLAMA) -->
+            <div id="view-strategic" class="view-section" style="display:none;">
+
+                <!-- 1. FORECAST SECTION -->
+                <div class="chart-container" style="margin-bottom: 24px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <h3>🔮 Gelecek 6 Ay Tahmini (AI Modeli)</h3>
+                        <div id="growthBadge"
+                            style="background:#222; padding:5px 10px; border-radius:4px; font-weight:bold; color:#aaa;">
+                            Büyüme: --
+                        </div>
+                    </div>
+                    <div
+                        style="background: rgba(255,255,255,0.05); padding:15px; border-radius:8px; margin-bottom:15px;">
+                        <span style="color:var(--accent-color);">💡 YZ Önerisi:</span>
+                        <span id="forecastRecommendation" style="color:#ddd;">Veri yükleniyor...</span>
+                    </div>
+                    <div style="position: relative; height: 350px; width: 100%;">
+                        <canvas id="forecastChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+
+                    <!-- 2. BRANCH PERFORMANCE MATRIX -->
+                    <div class="chart-container">
+                        <h3>📊 Şube Performans Matrisi (Verimlilik)</h3>
+                        <p style="font-size:12px; color:#888; margin-bottom:10px;">Şehir Ortalaması = %100 kabul edilir.
+                        </p>
+                        <div style="overflow-x:auto; max-height: 400px;">
+                            <table style="width:100%; text-align:left; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="border-bottom:1px solid #444; color:#888;">
+                                        <th style="padding:10px;">Şube</th>
+                                        <th style="padding:10px;">Vrm. Skoru</th>
+                                        <th style="padding:10px;">Durum</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="branchPerformanceBody">
+                                    <!-- JS will fill here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 3. LOCATION ANALYSIS opportunities -->
+                    <div class="chart-container">
+                        <h3>📍 Lokasyon Fırsat Analizi</h3>
+                        <p style="font-size:12px; color:#888; margin-bottom:10px;">Düşük rekabet, yüksek potansiyel
+                            bölgeler.</p>
+                        <div id="locationOpportunities"
+                            style="display:flex; flex-direction:column; gap:10px; max-height:400px; overflow-y:auto;">
+                            <!-- Cards will be injected here -->
+                        </div>
+                    </div>
+
                 </div>
             </div>
 

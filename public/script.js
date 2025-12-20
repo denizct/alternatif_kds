@@ -69,7 +69,11 @@ function switchView(viewId, element) {
     document.getElementById(viewId).style.display = 'block';
 
     // 3. Trigger Data Update (to refresh charts in hidden view if needed)
-    updateDashboard();
+    if (viewId === 'view-strategic') {
+        loadStrategicPlanning();
+    } else {
+        updateDashboard();
+    }
 }
 
 async function initDashboard() {
@@ -372,9 +376,218 @@ async function loadBreakdownCharts(query, productData = null) {
             });
         }
 
+
         // CITY CHART REMOVED
 
     } catch (err) {
         console.error(err);
+    }
+}
+
+// ==========================================
+// 4. STRATEGIC PLANNING LOGIC
+// ==========================================
+
+async function loadStrategicPlanning() {
+    // Parallel Fetch for speed
+    // 1. Forecast
+    loadForecastExtended();
+    // 2. Branch Performance
+    loadBranchPerformance();
+    // 3. Location Analysis
+    loadLocationAnalysis();
+}
+
+// 4.1 Forecast Chart (History + Future)
+let forecastChartInstance = null;
+async function loadForecastExtended() {
+    try {
+        const res = await fetch(`${API_URL}/dashboard/forecast`);
+        const data = await res.json();
+
+        // Recommendation & Badge
+        document.getElementById('forecastRecommendation').innerText = data.recommendation;
+        document.getElementById('growthBadge').innerText = `Büyüme: %${data.growthRate}`;
+
+        let color = '#888';
+        if (parseFloat(data.growthRate) > 20) color = 'var(--success-color)';
+        else if (parseFloat(data.growthRate) < 0) color = 'var(--danger-color)';
+        document.getElementById('growthBadge').style.color = color;
+
+        // Chart Data Prep
+        // We will combine history and forecast into one continuous line, but visually separate them?
+        // Actually, easiest way is 2 datasets: History (Solid), Forecast (Dashed).
+
+        // History Data
+        const histLabels = data.history.map(h => h.ay);
+        const histValues = data.history.map(h => h.ciro);
+
+        // Forecast Data
+        // To make lines connect, the first point of forecast should be the last point of history.
+        // Or we just rely on visual proximity. Let's add the last history point to forecast to bridge the gap.
+
+        const lastHist = data.history[data.history.length - 1];
+
+        const forecastLabels = data.forecast.map(f => f.ay);
+        const forecastValues = data.forecast.map(f => f.tahmini_ciro);
+
+        // Bridge point
+        const bridgedForecastLabels = [lastHist.ay, ...forecastLabels];
+        const bridgedForecastValues = [lastHist.ciro, ...forecastValues];
+
+        // Merge Labels
+        const allLabels = [...new Set([...histLabels, ...forecastLabels])]; // Unique sorting might be needed if overlap
+
+        // Dataset 1: History (Full length, null for future)
+        const dsHistory = allLabels.map(lbl => {
+            const h = data.history.find(x => x.ay === lbl);
+            return h ? h.ciro : null;
+        });
+
+        // Dataset 2: Forecast (Full length, null for past)
+        const dsForecast = allLabels.map(lbl => {
+            if (lbl === lastHist.ay) return lastHist.ciro; // Bridge point
+            const f = data.forecast.find(x => x.ay === lbl);
+            return f ? f.tahmini_ciro : null;
+        });
+
+        const ctx = document.getElementById('forecastChart').getContext('2d');
+        if (forecastChartInstance) forecastChartInstance.destroy();
+
+        forecastChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: allLabels,
+                datasets: [
+                    {
+                        label: 'Gerçekleşen Satışlar',
+                        data: dsHistory,
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Gelecek Tahmini (AI)',
+                        data: dsForecast,
+                        borderColor: '#ff0055',
+                        borderDash: [5, 5], // Dashed Line
+                        backgroundColor: 'rgba(255, 0, 85, 0.05)',
+                        fill: true,
+                        tension: 0.4,
+                        pointStyle: 'rectRot',
+                        pointRadius: 5
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: 'white' } },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
+                    y: { grid: { color: '#333' }, ticks: { color: '#aaa' } }
+                }
+            }
+        });
+
+    } catch (err) {
+        console.error('Forecast Error:', err);
+        document.getElementById('forecastRecommendation').innerText = "Veri alınamadı.";
+    }
+}
+
+// 4.2 Branch Performance
+async function loadBranchPerformance() {
+    try {
+        const res = await fetch(`${API_URL}/strategic/branch-performance`);
+        const data = await res.json();
+
+        const tbody = document.getElementById('branchPerformanceBody');
+        tbody.innerHTML = '';
+
+        data.forEach(item => {
+            let badgeClass = '';
+            // We'll use inline styles for badges for simplicity
+            let badgeStyle = "padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold;";
+
+            if (item.status === 'danger') badgeStyle += "background:rgba(255, 0, 0, 0.2); color:#ff5555;";
+            else if (item.status === 'warning') badgeStyle += "background:rgba(255, 165, 0, 0.2); color:orange;";
+            else if (item.status === 'info') badgeStyle += "background:rgba(0, 255, 255, 0.2); color:#00ffff;";
+            else badgeStyle += "background:#333; color:#aaa;";
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="padding:10px;">
+                    <div style="font-weight:bold;">${item.market_ad}</div>
+                    <div style="font-size:12px; color:#888;">${item.sehir}</div>
+                </td>
+                <td style="padding:10px;">
+                    <div style="font-size:16px;">%${item.verimlilik}</div>
+                    <small style="color:#666;">Sepet: ₺${item.sepet_ort.toFixed(1)}</small>
+                </td>
+                <td style="padding:10px;">
+                    <span style="${badgeStyle}">${item.recommendation}</span>
+                </td>
+            `;
+            tr.style.borderBottom = '1px solid #333';
+            tbody.appendChild(tr);
+        });
+
+    } catch (err) {
+        console.error('Branch Perf Error:', err);
+    }
+}
+
+// 4.3 Location Analysis
+async function loadLocationAnalysis() {
+    try {
+        const res = await fetch(`${API_URL}/strategic/location-analysis`);
+        const data = await res.json();
+
+        const container = document.getElementById('locationOpportunities');
+        container.innerHTML = ''; // Clear
+
+        data.forEach(item => {
+            // Only show significant ones to keep UI clean, or show all with styles
+            // Let's show all
+
+            let borderColor = '#333';
+            if (item.signal === 'success') borderColor = 'var(--success-color)';
+            if (item.signal === 'danger') borderColor = 'var(--danger-color)';
+
+            const div = document.createElement('div');
+            div.style.cssText = `
+                background: linear-gradient(90deg, #1a1a1a 0%, #222 100%);
+                border-left: 4px solid ${borderColor};
+                padding: 12px;
+                border-radius: 4px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            `;
+
+            div.innerHTML = `
+                <div>
+                    <div style="font-weight:bold; font-size:16px;">${item.ilce} <small style="color:#666;">(${item.sehir})</small></div>
+                    <div style="font-size:12px; color:#aaa; margin-top:4px;">
+                        Mevcut Şube: ${item.sube_sayisi} | Potansiyel Skoru: <strong>${item.potansiyel_skoru}</strong>
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                     <div style="font-size:13px; font-weight:bold; color:${borderColor === '#333' ? '#aaa' : borderColor};">
+                        ${item.recommendation}
+                     </div>
+                </div>
+            `;
+
+            container.appendChild(div);
+        });
+
+    } catch (err) {
+        console.error('Location Error:', err);
     }
 }
