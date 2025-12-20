@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
             window.location.href = 'index.html';
             return;
         }
-        document.getElementById('welcomeUser').innerText = `Merhaba`;
+        document.getElementById('welcomeUser').innerText = `Merhaba, ${user}`;
 
         initDashboard();
     }
