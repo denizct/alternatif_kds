@@ -93,11 +93,9 @@ app.get('/api/dashboard/stats', (req, res) => {
                 if (err) return res.status(500).json({ error: err });
 
                 const ciro = totalResults[0].toplam_ciro || 0;
-                // const kar = ciro * 0.25; // Removed profit calculation as it is replaced by Best Product
 
                 res.json({
                     toplam_ciro: ciro,
-                    // toplam_kar: kar, // No longer needed for UI but keeping field empty if safer, or just omit
                     toplam_satis_adedi: totalResults[0].toplam_satis_adedi || 0,
                     en_iyi_sube: topMarketResults.length > 0 ? topMarketResults[0].market_ad : '-',
                     en_cok_satan_urun: bestProductResults.length > 0 ? bestProductResults[0].urun_ad : '-'
@@ -233,25 +231,46 @@ app.get('/api/dashboard/breakdown', (req, res) => {
 // 6. GELECEK TAHMİNİ (FORECAST) API - GELİŞMİŞ
 // Mantık: Basit Regresyon yerine Mevsimsellik + CAGR (Yıllık Büyüme)
 app.get('/api/dashboard/forecast', (req, res) => {
+    const { ay, sehir_id, market_id, kategori_id } = req.query;
+
+    let whereClauses = [];
+    // For forecast history, we always want 24 months for calculation, 
+    // BUT we should filter by city/market/category if selected to give a relevant forecast.
+
+    whereClauses.push("s.tarih >= DATE_SUB(NOW(), INTERVAL 24 MONTH)"); // Fixed requirement for model
+
+    if (sehir_id && sehir_id !== 'all') whereClauses.push(`m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`);
+    if (market_id && market_id !== 'all') whereClauses.push(`s.market_id = ${mysql.escape(market_id)}`);
+
+    let join = "JOIN Marketler m ON s.market_id = m.market_id";
+    if (kategori_id && kategori_id !== 'all') {
+        join += " JOIN SatisDetay sd ON s.satis_id = sd.satis_id JOIN Urunler u ON sd.urun_id = u.urun_id";
+        whereClauses.push(`u.kategori_id = ${mysql.escape(kategori_id)}`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
+
     const sqlHistory = `
         SELECT 
             DATE_FORMAT(s.tarih, '%Y-%m') as ay, 
             SUM(s.tutar) as toplam_ciro
         FROM Satislar s
-        WHERE s.tarih >= DATE_SUB(NOW(), INTERVAL 24 MONTH) 
+        ${join}
+        ${whereSql}
         GROUP BY DATE_FORMAT(s.tarih, '%Y-%m')
         ORDER BY ay ASC
     `;
 
     db.query(sqlHistory, (err, history) => {
         if (err) return res.status(500).json({ error: err });
-        
+
         // Veri yetersizse
         if (history.length < 12) {
-            return res.json({ 
-                history: history, 
-                forecast: [], 
-                recommendation: "Yeterli veri yok. En az 12 aylık veri gerekli." 
+            return res.json({
+                history: history,
+                forecast: [],
+                recommendation: "Yeterli veri yok. En az 12 aylık veri gerekli.",
+                growthRate: 0
             });
         }
 
@@ -259,10 +278,10 @@ app.get('/api/dashboard/forecast', (req, res) => {
         // Son 12 ayın cirosu vs Önceki 12 ayın cirosu
         let last12Months = history.slice(-12);
         let previous12Months = history.slice(-24, -12);
-        
+
         // Eğer 24 ay yoksa, sadece son aylara bakarak basit trend çıkaracağız
         let growthRate = 0.05; // Varsayılan %5
-        
+
         if (previous12Months.length > 0) {
             const sumLast = last12Months.reduce((a, b) => a + parseFloat(b.toplam_ciro), 0);
             const sumPrev = previous12Months.reduce((a, b) => a + parseFloat(b.toplam_ciro), 0);
@@ -272,12 +291,14 @@ app.get('/api/dashboard/forecast', (req, res) => {
         // 2. Mevsimsellik İndeksi (Basitleştirilmiş)
         // Her ayın önceki yılın aynı ayına göre oranı
         // Biz burada basitçe son yılın trendine büyüme oranını ekleyeceğiz.
-        
+
         let forecastData = [];
         let currentDate = new Date();
         let formattedHistory = history.map(h => ({ ay: h.ay, ciro: parseFloat(h.toplam_ciro) }));
 
         let recommendation = "";
+        let growthRatePercent = (growthRate * 100).toFixed(1);
+
         if (growthRate < 0) {
             recommendation = "DİKKAT: Satışlarda yıllık bazda düşüş var. Stok maliyetlerini düşürün ve verimsiz ürünleri temizleyin.";
         } else if (growthRate > 0.20) {
@@ -287,31 +308,42 @@ app.get('/api/dashboard/forecast', (req, res) => {
         }
 
         for (let i = 1; i <= 6; i++) { // 6 Ay İleri
-            // Geçen yılın aynı ayını bul
-            // Basit tahmin: Son ay * (1 + aylık_ortalama_değişim) yerine
-            // Seasonal yaklaşım: Geçen yılın aynı ayı * (1 + Yıllık_Büyüme)
-            
             let targetDate = new Date();
             targetDate.setMonth(targetDate.getMonth() + i);
             let monthStr = targetDate.toISOString().slice(5, 7); // "05"
 
-            // Geçmiş veride bu ayı bul (en son yılın verisi)
             let pastMonthData = last12Months.find(d => d.ay.endsWith(monthStr));
-            let baseVal = pastMonthData ? parseFloat(pastMonthData.toplam_ciro) : (formattedHistory[formattedHistory.length-1].ciro);
+            let baseVal = pastMonthData ? parseFloat(pastMonthData.toplam_ciro) : (formattedHistory[formattedHistory.length - 1].ciro);
 
             let forecastVal = baseVal * (1 + growthRate);
-
-            // Hafif rassallık/noise ekle (gerçekçi görünüm için)
-            // forecastVal = forecastVal * (0.95 + Math.random() * 0.10); 
-
             let dateStr = targetDate.toISOString().slice(0, 7);
             forecastData.push({ ay: dateStr, tahmini_ciro: forecastVal });
         }
 
+        // 3. Prepare Final Response Data (Respect User Filter)
+        // We used 24 months for MATH, but user might want to see only "Last 6 Months" of history.
+
+        let displayHistory = formattedHistory;
+
+        if (ay) {
+            if (ay.length === 4) {
+                // Year Filter (e.g. 2023)
+                // If user selected 2023, show only 2023 history.
+                // Forecast (future) might look disconnected but user requested "divide that period".
+                displayHistory = formattedHistory.filter(h => h.ay.startsWith(ay));
+            } else if (ay !== 'all') {
+                // "Last X Months" -> Slice the end
+                const monthsToShow = parseInt(ay);
+                if (!isNaN(monthsToShow) && displayHistory.length > monthsToShow) {
+                    displayHistory = displayHistory.slice(-monthsToShow);
+                }
+            }
+        }
+
         res.json({
-            history: formattedHistory,
+            history: displayHistory,
             forecast: forecastData,
-            growthRate: (growthRate * 100).toFixed(1),
+            growthRate: growthRatePercent,
             recommendation: recommendation
         });
     });
@@ -319,9 +351,29 @@ app.get('/api/dashboard/forecast', (req, res) => {
 
 // 8. STRATEJİK: ŞUBE PERFORMANS MATRİSİ (Kapatma/İyileştirme Kararı)
 app.get('/api/strategic/branch-performance', (req, res) => {
-    // Kriter: Şube Cirosu vs Şehir Ortalaması
-    // Kriter: Sepet Ortalaması (Ciro / Adet)
-    
+    const { ay, sehir_id, kategori_id } = req.query;
+
+    let whereClauses = [];
+    // Date Filter
+    if (ay) {
+        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
+        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
+        else whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`);
+    } else {
+        whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`);
+    }
+
+    if (sehir_id && sehir_id !== 'all') whereClauses.push(`s_sehir.sehir_id = ${mysql.escape(sehir_id)}`);
+
+    // Category filter requires joining SatisDetay and Urunler
+    let extraJoins = "";
+    if (kategori_id && kategori_id !== 'all') {
+        extraJoins = "JOIN SatisDetay sd ON s.satis_id = sd.satis_id JOIN Urunler u ON sd.urun_id = u.urun_id";
+        whereClauses.push(`u.kategori_id = ${mysql.escape(kategori_id)}`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
+
     const sql = `
         SELECT 
             m.market_ad,
@@ -333,7 +385,8 @@ app.get('/api/strategic/branch-performance', (req, res) => {
         JOIN Marketler m ON s.market_id = m.market_id
         JOIN Ilceler i ON m.ilce_id = i.ilce_id
         JOIN Sehirler s_sehir ON i.sehir_id = s_sehir.sehir_id
-        WHERE s.tarih >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
+        ${extraJoins}
+        ${whereSql}
         GROUP BY m.market_id, m.market_ad, s_sehir.sehir_ad, s_sehir.sehir_id
     `;
 
@@ -351,7 +404,7 @@ app.get('/api/strategic/branch-performance', (req, res) => {
         let results = branches.map(b => {
             let ciro = parseFloat(b.toplam_ciro);
             let cityAvg = cityStats[b.sehir_ad].total / cityStats[b.sehir_ad].count;
-            
+
             let efficiencyScore = (ciro / cityAvg) * 100; // 100 = Ortalama, <70 Kötü
             let recommendation = "NORMAL";
             let status = "success"; // color code
@@ -387,9 +440,21 @@ app.get('/api/strategic/branch-performance', (req, res) => {
 
 // 9. STRATEJİK: LOKASYON ANALİZİ (Yeni Şube Fırsatları)
 app.get('/api/strategic/location-analysis', (req, res) => {
-    // Mantık: İlçe Cirosu / Şube Sayısı = Şube Başına Düşen Ciro
-    // Eğer Şube Başı Ciro çok yüksekse -> Doygunluk düşük -> Yeni şube açılabilir
-    
+    const { ay, sehir_id } = req.query;
+
+    let whereClauses = [];
+    if (ay) {
+        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
+        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
+        else whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 12 MONTH)`);
+    } else {
+        whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 12 MONTH)`);
+    }
+
+    if (sehir_id && sehir_id !== 'all') whereClauses.push(`s_sehir.sehir_id = ${mysql.escape(sehir_id)}`);
+
+    const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
+
     const sql = `
         SELECT 
             i.ilce_ad,
@@ -400,7 +465,7 @@ app.get('/api/strategic/location-analysis', (req, res) => {
         JOIN Marketler m ON s.market_id = m.market_id
         JOIN Ilceler i ON m.ilce_id = i.ilce_id
         JOIN Sehirler s_sehir ON i.sehir_id = s_sehir.sehir_id
-        WHERE s.tarih >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        ${whereSql}
         GROUP BY i.ilce_id, i.ilce_ad, s_sehir.sehir_ad
     `;
 
@@ -419,10 +484,8 @@ app.get('/api/strategic/location-analysis', (req, res) => {
         let results = districts.map(d => {
             let revenue = parseFloat(d.toplam_bolge_cirosu);
             let avgRevPerBranch = revenue / d.sube_sayisi;
-            
+
             // Potansiyel Skoru: (Bölge Ortalaması / Genel Ortalama)
-            // Eğer bölgedeki şubeler genel ortalamanın %150'si kadar ciro yapıyorsa, 
-            // demek ki orada talep çok, ama şube az.
             let potentialScore = (avgRevPerBranch / globalAvgPerBranch) * 100;
 
             let recommendation = "Nötr";
@@ -433,10 +496,10 @@ app.get('/api/strategic/location-analysis', (req, res) => {
                 signal = "success"; // green
             } else if (potentialScore > 110) {
                 recommendation = "FIRSAT OLABİLİR";
-                signal = "info"; // blue
+                signal = "info";
             } else if (potentialScore < 60) {
                 recommendation = "DOYGUN PAZAR - Yatırım Yapma";
-                signal = "danger"; // red
+                signal = "danger";
             }
 
             return {
@@ -462,6 +525,114 @@ app.get('/api/strategic/location-analysis', (req, res) => {
 // Ana sayfa yönlendirmesi
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// 10. TREND ANALİZİ (Stratejik Planlama - Forecast yerine)
+app.get('/api/strategic/trend-analysis', (req, res) => {
+    const { ay, sehir_id } = req.query;
+
+    // Default to last 6 months if not specified
+    let period = 6;
+    if (ay && ay !== 'all' && ay.length !== 4) period = parseInt(ay);
+
+    // Logic: Compare (Now - Period) vs (Now - Period*2)
+    // Example: Last 6 months vs Previous 6 months
+
+    let whereCurrent = [`s.tarih >= DATE_SUB(NOW(), INTERVAL ${period} MONTH)`];
+    let wherePrevious = [`s.tarih >= DATE_SUB(NOW(), INTERVAL ${period * 2} MONTH)`, `s.tarih < DATE_SUB(NOW(), INTERVAL ${period} MONTH)`];
+
+    if (sehir_id && sehir_id !== 'all') {
+        const cityFilter = `m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`;
+        whereCurrent.push(cityFilter);
+        wherePrevious.push(cityFilter);
+    }
+
+    const getQuery = (where) => `
+        SELECT k.kategori_ad, SUM(s.tutar) as ciro
+        FROM Satislar s
+        JOIN Marketler m ON s.market_id = m.market_id
+        JOIN SatisDetay sd ON s.satis_id = sd.satis_id
+        JOIN Urunler u ON sd.urun_id = u.urun_id
+        JOIN Kategoriler k ON u.kategori_id = k.kategori_id
+        WHERE ${where.join(' AND ')}
+        GROUP BY k.kategori_ad
+    `;
+
+    db.query(getQuery(whereCurrent), (err, currentResults) => {
+        if (err) return res.status(500).json({ error: err });
+
+        db.query(getQuery(wherePrevious), (err, prevResults) => {
+            if (err) return res.status(500).json({ error: err });
+
+            let trends = [];
+            currentResults.forEach(curr => {
+                const prev = prevResults.find(p => p.kategori_ad === curr.kategori_ad);
+                const prevCiro = prev ? parseFloat(prev.ciro) : 0;
+                const currCiro = parseFloat(curr.ciro);
+
+                let change = 100; // default infinite growth
+                if (prevCiro > 0) change = ((currCiro - prevCiro) / prevCiro) * 100;
+
+                trends.push({
+                    name: curr.kategori_ad,
+                    current: currCiro,
+                    previous: prevCiro,
+                    change: change.toFixed(1),
+                    direction: change >= 0 ? 'up' : 'down'
+                });
+            });
+
+            // Sort by absolute change magnitude or just percentage? 
+            // User asked for "Rising" and "Falling".
+            trends.sort((a, b) => parseFloat(b.change) - parseFloat(a.change));
+
+            const risers = trends.slice(0, 3); // Top 3 risers
+            const fallers = trends.filter(t => t.change < 0).slice(-3).reverse(); // Bottom 3 fallers
+
+            res.json({ risers, fallers });
+        });
+    });
+});
+
+// 11. EN ÇOK SATAN ÜRÜNLER (Eksik Endpoint)
+app.get('/api/dashboard/top-products', (req, res) => {
+    const { ay, sehir_id, market_id, kategori_id } = req.query;
+
+    let whereClauses = [];
+    if (ay) {
+        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
+        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
+    }
+
+    if (sehir_id && sehir_id !== 'all') whereClauses.push(`m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`);
+    if (market_id && market_id !== 'all') whereClauses.push(`s.market_id = ${mysql.escape(market_id)}`);
+
+    let join = "JOIN Marketler m ON s.market_id = m.market_id JOIN SatisDetay sd ON s.satis_id = sd.satis_id JOIN Urunler u ON sd.urun_id = u.urun_id JOIN Kategoriler k ON u.kategori_id = k.kategori_id";
+
+    if (kategori_id && kategori_id !== 'all') {
+        whereClauses.push(`u.kategori_id = ${mysql.escape(kategori_id)}`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
+
+    const sql = `
+        SELECT 
+            u.urun_ad,
+            k.kategori_ad,
+            SUM(sd.adet) as toplam_adet,
+            SUM(sd.adet * sd.birim_fiyat) as toplam_ciro
+        FROM Satislar s
+        ${join}
+        ${whereSql}
+        GROUP BY u.urun_id, u.urun_ad, k.kategori_ad
+        ORDER BY toplam_adet DESC
+        LIMIT 10
+    `;
+
+    db.query(sql, (err, results) => {
+        if (err) return res.status(500).json({ error: err });
+        res.json(results);
+    });
 });
 
 app.listen(3000, () => {

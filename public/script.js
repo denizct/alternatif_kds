@@ -70,7 +70,7 @@ function switchView(viewId, element) {
 
     // 3. Trigger Data Update (to refresh charts in hidden view if needed)
     if (viewId === 'view-strategic') {
-        loadStrategicPlanning();
+        updateDashboard(); // Use main update function to ensure filters are read
     } else {
         updateDashboard();
     }
@@ -154,6 +154,28 @@ async function loadFilters() {
             catSelect.appendChild(opt);
         });
 
+        // 3. Populate Strategic City Filter
+        const strategicCitySelect = document.getElementById('strategicCityFilter');
+        if (strategicCitySelect) {
+            // Keep "All" option, verify duplicates?
+            strategicCitySelect.innerHTML = '<option value="all">Tüm Şehirler</option>';
+            data.cities.forEach(city => {
+                const opt = document.createElement('option');
+                opt.value = city.sehir_id;
+                opt.innerText = city.sehir_ad;
+                strategicCitySelect.appendChild(opt);
+            });
+
+            // Listen for changes specifically on this filter
+            strategicCitySelect.addEventListener('change', () => {
+                const period = document.getElementById('periodFilter').value;
+                const strategicCity = strategicCitySelect.value;
+                // Only reload Strategic part
+                const query = `?ay=${period}&sehir_id=${strategicCity}`;
+                loadStrategicPlanning(query);
+            });
+        }
+
         // Add Event Listener to City to filter Markets
         citySelect.addEventListener('change', () => {
             const selectedCityId = citySelect.value;
@@ -182,12 +204,26 @@ async function updateDashboard() {
 
     const query = `?ay=${period}&sehir_id=${city}&market_id=${market}&kategori_id=${category}`;
 
-    loadStats(query);
-    loadTrendChart(query, period);
+    const strategicView = document.getElementById('view-strategic');
+    const isStrategicVisible = strategicView && strategicView.style.display !== 'none';
 
-    // We need product data for the pie chart if category is selected
-    const productData = await loadTopProducts(query);
-    loadBreakdownCharts(query, productData);
+    if (isStrategicVisible) {
+        // Strategic uses its OWN city filter, but maybe shares Period?
+        // User request: "Statejik planlama sayfası için de şehirler filtresi olsun"
+        // Implicitly: It ignores the global city filter? Yes.
+        const stratCity = document.getElementById('strategicCityFilter').value;
+        const stratQuery = `?ay=${period}&sehir_id=${stratCity}`;
+        loadStrategicPlanning(stratQuery);
+    } else {
+        // Load normal dashboard stuff
+        loadStats(query);
+        loadTrendChart(query, period);
+
+        const productData = await loadTopProducts(query);
+        // FORCE REDRAW breakdown charts (Fixes Pie Chart bug)
+        // Ensure canvas is cleared or destroyed properly in loadBreakdownCharts (already handled)
+        loadBreakdownCharts(query, productData);
+    }
 }
 
 // Helper to get text for period label
@@ -322,7 +358,7 @@ async function loadBreakdownCharts(query, productData = null) {
                         backgroundColor: [
                             '#00d4ff', '#ff0055', '#00ff9d', '#ffb700', '#9d00ff', '#ff5722',
                             '#00bcd4', '#e91e63', '#4caf50', '#ffc107', '#673ab7', '#ff9800',
-                            '#03a9f4', '#f44336', '#8bc34a', '#ffeb3b', '#3f51b5', '#ff5722' // More colors for products
+                            '#03a9f4', '#f44343', '#8bc34a', '#ffeb3b', '#3f51b5', '#ff5722' // More colors for products
                         ],
                         borderWidth: 0
                     }]
@@ -388,206 +424,140 @@ async function loadBreakdownCharts(query, productData = null) {
 // 4. STRATEGIC PLANNING LOGIC
 // ==========================================
 
-async function loadStrategicPlanning() {
-    // Parallel Fetch for speed
-    // 1. Forecast
-    loadForecastExtended();
+async function loadStrategicPlanning(query = '') {
+    // 1. Trend Analysis (Replaces Forecast)
+    loadTrendAnalysis(query);
     // 2. Branch Performance
-    loadBranchPerformance();
+    loadBranchPerformance(query);
     // 3. Location Analysis
-    loadLocationAnalysis();
+    loadLocationAnalysis(query);
 }
 
-// 4.1 Forecast Chart (History + Future)
-let forecastChartInstance = null;
-async function loadForecastExtended() {
+// 4.1 Trend Analysis
+async function loadTrendAnalysis(query) {
     try {
-        const res = await fetch(`${API_URL}/dashboard/forecast`);
+        const res = await fetch(`${API_URL}/strategic/trend-analysis${query}`);
         const data = await res.json();
 
-        // Recommendation & Badge
-        document.getElementById('forecastRecommendation').innerText = data.recommendation;
-        document.getElementById('growthBadge').innerText = `Büyüme: %${data.growthRate}`;
+        const renderList = (items, containerId, icon, colorClass) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
 
-        let color = '#888';
-        if (parseFloat(data.growthRate) > 20) color = 'var(--success-color)';
-        else if (parseFloat(data.growthRate) < 0) color = 'var(--danger-color)';
-        document.getElementById('growthBadge').style.color = color;
-
-        // Chart Data Prep
-        // We will combine history and forecast into one continuous line, but visually separate them?
-        // Actually, easiest way is 2 datasets: History (Solid), Forecast (Dashed).
-
-        // History Data
-        const histLabels = data.history.map(h => h.ay);
-        const histValues = data.history.map(h => h.ciro);
-
-        // Forecast Data
-        // To make lines connect, the first point of forecast should be the last point of history.
-        // Or we just rely on visual proximity. Let's add the last history point to forecast to bridge the gap.
-
-        const lastHist = data.history[data.history.length - 1];
-
-        const forecastLabels = data.forecast.map(f => f.ay);
-        const forecastValues = data.forecast.map(f => f.tahmini_ciro);
-
-        // Bridge point
-        const bridgedForecastLabels = [lastHist.ay, ...forecastLabels];
-        const bridgedForecastValues = [lastHist.ciro, ...forecastValues];
-
-        // Merge Labels
-        const allLabels = [...new Set([...histLabels, ...forecastLabels])]; // Unique sorting might be needed if overlap
-
-        // Dataset 1: History (Full length, null for future)
-        const dsHistory = allLabels.map(lbl => {
-            const h = data.history.find(x => x.ay === lbl);
-            return h ? h.ciro : null;
-        });
-
-        // Dataset 2: Forecast (Full length, null for past)
-        const dsForecast = allLabels.map(lbl => {
-            if (lbl === lastHist.ay) return lastHist.ciro; // Bridge point
-            const f = data.forecast.find(x => x.ay === lbl);
-            return f ? f.tahmini_ciro : null;
-        });
-
-        const ctx = document.getElementById('forecastChart').getContext('2d');
-        if (forecastChartInstance) forecastChartInstance.destroy();
-
-        forecastChartInstance = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: allLabels,
-                datasets: [
-                    {
-                        label: 'Gerçekleşen Satışlar',
-                        data: dsHistory,
-                        borderColor: '#00d4ff',
-                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
-                        fill: true,
-                        tension: 0.4
-                    },
-                    {
-                        label: 'Gelecek Tahmini (AI)',
-                        data: dsForecast,
-                        borderColor: '#ff0055',
-                        borderDash: [5, 5], // Dashed Line
-                        backgroundColor: 'rgba(255, 0, 85, 0.05)',
-                        fill: true,
-                        tension: 0.4,
-                        pointStyle: 'rectRot',
-                        pointRadius: 5
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { labels: { color: 'white' } },
-                    tooltip: { mode: 'index', intersect: false }
-                },
-                scales: {
-                    x: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
-                    y: { grid: { color: '#333' }, ticks: { color: '#aaa' } }
-                }
+            if (items.length === 0) {
+                container.innerHTML = '<div style="color:#666; font-style:italic;">Veri yok</div>';
+                return;
             }
-        });
+
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.style.marginBottom = '8px';
+                div.style.padding = '8px';
+                div.style.background = 'rgba(255,255,255,0.03)';
+                div.style.borderRadius = '4px';
+                div.style.display = 'flex';
+                div.style.justifyContent = 'space-between';
+
+                div.innerHTML = `
+                    <span>${item.name}</span>
+                    <strong style="color:var(--${colorClass}-color)">
+                        ${icon} %${Math.abs(item.change)}
+                    </strong>
+                `;
+                container.appendChild(div);
+            });
+        };
+
+        renderList(data.risers, 'trendRisingList', '▲', 'success');
+        renderList(data.fallers, 'trendFallingList', '▼', 'danger');
 
     } catch (err) {
-        console.error('Forecast Error:', err);
-        document.getElementById('forecastRecommendation').innerText = "Veri alınamadı.";
+        console.error('Trend Analysis Error:', err);
     }
 }
 
 // 4.2 Branch Performance
-async function loadBranchPerformance() {
+async function loadBranchPerformance(query) {
+    // ... (Existing implementation, ensure query is passed)
     try {
-        const res = await fetch(`${API_URL}/strategic/branch-performance`);
+        const res = await fetch(`${API_URL}/strategic/branch-performance${query}`);
         const data = await res.json();
-
         const tbody = document.getElementById('branchPerformanceBody');
-        tbody.innerHTML = '';
+        if (tbody) {
+            tbody.innerHTML = '';
+            data.forEach(item => {
+                // ... (reuse badge logic)
+                let badgeStyle = "padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold;";
+                if (item.status === 'danger') badgeStyle += "background:rgba(255, 0, 0, 0.2); color:#ff5555;";
+                else if (item.status === 'warning') badgeStyle += "background:rgba(255, 165, 0, 0.2); color:orange;";
+                else if (item.status === 'info') badgeStyle += "background:rgba(0, 255, 255, 0.2); color:#00ffff;";
+                else badgeStyle += "background:#333; color:#aaa;";
 
-        data.forEach(item => {
-            let badgeClass = '';
-            // We'll use inline styles for badges for simplicity
-            let badgeStyle = "padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold;";
-
-            if (item.status === 'danger') badgeStyle += "background:rgba(255, 0, 0, 0.2); color:#ff5555;";
-            else if (item.status === 'warning') badgeStyle += "background:rgba(255, 165, 0, 0.2); color:orange;";
-            else if (item.status === 'info') badgeStyle += "background:rgba(0, 255, 255, 0.2); color:#00ffff;";
-            else badgeStyle += "background:#333; color:#aaa;";
-
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td style="padding:10px;">
-                    <div style="font-weight:bold;">${item.market_ad}</div>
-                    <div style="font-size:12px; color:#888;">${item.sehir}</div>
-                </td>
-                <td style="padding:10px;">
-                    <div style="font-size:16px;">%${item.verimlilik}</div>
-                    <small style="color:#666;">Sepet: ₺${item.sepet_ort.toFixed(1)}</small>
-                </td>
-                <td style="padding:10px;">
-                    <span style="${badgeStyle}">${item.recommendation}</span>
-                </td>
-            `;
-            tr.style.borderBottom = '1px solid #333';
-            tbody.appendChild(tr);
-        });
-
-    } catch (err) {
-        console.error('Branch Perf Error:', err);
-    }
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="padding:10px;">
+                        <div style="font-weight:bold;">${item.market_ad}</div>
+                        <div style="font-size:12px; color:#888;">${item.sehir}</div>
+                    </td>
+                    <td style="padding:10px;">
+                        <div style="font-size:16px;">%${item.verimlilik}</div>
+                        <small style="color:#666;">Sepet: ₺${item.sepet_ort.toFixed(1)}</small>
+                    </td>
+                    <td style="padding:10px;">
+                        <span style="${badgeStyle}">${item.recommendation}</span>
+                    </td>
+                `;
+                tr.style.borderBottom = '1px solid #333';
+                tbody.appendChild(tr);
+            });
+        }
+    } catch (e) { console.error(e); }
 }
 
 // 4.3 Location Analysis
-async function loadLocationAnalysis() {
+async function loadLocationAnalysis(query) {
     try {
-        const res = await fetch(`${API_URL}/strategic/location-analysis`);
+        const res = await fetch(`${API_URL}/strategic/location-analysis${query}`);
         const data = await res.json();
 
         const container = document.getElementById('locationOpportunities');
-        container.innerHTML = ''; // Clear
+        if (container) {
+            container.innerHTML = '';
+            data.forEach(item => {
+                let borderColor = '#333';
+                if (item.signal === 'success') borderColor = 'var(--success-color)';
+                if (item.signal === 'danger') borderColor = 'var(--danger-color)';
+                if (item.signal === 'info') borderColor = '#00d4ff';
 
-        data.forEach(item => {
-            // Only show significant ones to keep UI clean, or show all with styles
-            // Let's show all
-
-            let borderColor = '#333';
-            if (item.signal === 'success') borderColor = 'var(--success-color)';
-            if (item.signal === 'danger') borderColor = 'var(--danger-color)';
-
-            const div = document.createElement('div');
-            div.style.cssText = `
-                background: linear-gradient(90deg, #1a1a1a 0%, #222 100%);
-                border-left: 4px solid ${borderColor};
-                padding: 12px;
-                border-radius: 4px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            `;
-
-            div.innerHTML = `
-                <div>
-                    <div style="font-weight:bold; font-size:16px;">${item.ilce} <small style="color:#666;">(${item.sehir})</small></div>
-                    <div style="font-size:12px; color:#aaa; margin-top:4px;">
-                        Mevcut Şube: ${item.sube_sayisi} | Potansiyel Skoru: <strong>${item.potansiyel_skoru}</strong>
+                const div = document.createElement('div');
+                div.style.cssText = `
+                    background: linear-gradient(90deg, #1a1a1a 0%, #222 100%);
+                    border-left: 4px solid ${borderColor};
+                    padding: 12px;
+                    border-radius: 4px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 10px;
+                `;
+                div.innerHTML = `
+                    <div>
+                        <div style="font-weight:bold; font-size:16px;">${item.ilce} <small style="color:#666;">(${item.sehir})</small></div>
+                        <div style="font-size:12px; color:#aaa; margin-top:4px;">
+                            Mevcut Şube: ${item.sube_sayisi} | Potansiyel: <strong>${item.potansiyel_skoru}</strong>
+                        </div>
                     </div>
-                </div>
-                <div style="text-align:right;">
-                     <div style="font-size:13px; font-weight:bold; color:${borderColor === '#333' ? '#aaa' : borderColor};">
-                        ${item.recommendation}
-                     </div>
-                </div>
-            `;
-
-            container.appendChild(div);
-        });
-
+                    <div style="text-align:right;">
+                         <div style="font-size:13px; font-weight:bold; color:${borderColor === '#333' ? '#aaa' : borderColor};">
+                            ${item.recommendation}
+                         </div>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
     } catch (err) {
         console.error('Location Error:', err);
     }
+}
 }
