@@ -560,4 +560,3 @@ async function loadLocationAnalysis(query) {
         console.error('Location Error:', err);
     }
 }
-}

@@ -13,7 +13,7 @@ DB_CONFIG = {
 }
 
 # --- SİMÜLASYON AYARLARI ---
-NUM_TRANSACTIONS = 15000  # İşlem sayısı
+NUM_TRANSACTIONS = 5000  # İşlem sayısı - DÜŞÜRÜLDÜ
 START_DATE = datetime(2024, 1, 1) 
 END_DATE = datetime(2026, 6, 1) 
 DATE_RANGE = (END_DATE - START_DATE).days
@@ -26,21 +26,21 @@ def generate_synthetic_data():
 
         # 1. TEMİZLİK (Tabloları sıfırla)
         print("Tablolar temizleniyor (TRUNCATE)...")
-        # Foreign key hatası almamak için kontrolü kapatıp siliyoruz
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0;")
-        cursor.execute("TRUNCATE TABLE satisdetay;") # Küçük harf düzeltildi
-        cursor.execute("TRUNCATE TABLE satislar;")   # Küçük harf düzeltildi
+        cursor.execute("TRUNCATE TABLE satisdetay;")
+        cursor.execute("TRUNCATE TABLE satislar;")
         cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
         conn.commit()
 
-        # 2. VERİLERİ ÇEK (Market ve Ürünler)
+        # 2. VERİLERİ ÇEK
         cursor.execute("SELECT market_id, ilce_id FROM Marketler")
-        markets_data = {row[0]: row[1] for row in cursor.fetchall()} 
+        # Store as list of tuples for easier processing
+        all_markets = cursor.fetchall() # [(id, ilce_id), ...]
         
         cursor.execute("SELECT urun_id, kategori_id FROM Urunler")
         products_data = {row[0]: row[1] for row in cursor.fetchall()} 
         
-        if not markets_data or not products_data:
+        if not all_markets or not products_data:
             print("HATA: Marketler veya Ürünler tablosu boş!")
             return None, None
 
@@ -52,9 +52,65 @@ def generate_synthetic_data():
             cursor.close()
             conn.close()
 
-    market_ids = list(markets_data.keys())
+    market_ids = [m[0] for m in all_markets]
     product_ids = list(products_data.keys())
-    manisa_ilce_id = 5 
+    
+    # --- STRATEJİK SENARYO AYARLARI ---
+    # 1. İlçe Bazlı Fırsatlar (Opportunity Zones)
+    # Rastgele 2 ilçe seç ve buraları "Potansiyeli Yüksek" yap (Çok satış, yüksek ciro)
+    unique_districts = list(set([m[1] for m in all_markets]))
+    opportunity_districts = []
+    if len(unique_districts) > 2:
+        opportunity_districts = np.random.choice(unique_districts, 2, replace=False)
+    
+    print(f"Fırsat İlçeleri (Opportunity Zones): {opportunity_districts}")
+
+    # 2. Şube Performansları (Risk vs Star)
+    # Her markete bir "ağırlık" (probabilty weight) ata.
+    market_weights = {}
+    
+    # Grupları ayır
+    num_markets = len(market_ids)
+    risky_count = int(num_markets * 0.2) # %20 Riskli
+    star_count = int(num_markets * 0.2)  # %20 Yıldız
+    
+    # Rastgele karıştır
+    shuffled_markets = np.random.permutation(all_markets)
+    
+    risky_markets = [m[0] for m in shuffled_markets[:risky_count]]
+    star_markets = [m[0] for m in shuffled_markets[risky_count:risky_count+star_count]]
+    # Kalanlar normal
+
+    # Ağırlıkları belirle
+    prob_weights = []
+    
+    for market in all_markets:
+        m_id = market[0]
+        ilce_id = market[1]
+        
+        weight = 1.0 # Normal
+        
+        # Riskli ise az satış
+        if m_id in risky_markets:
+            weight = 0.4
+            
+        # Yıldız ise çok satış
+        if m_id in star_markets:
+            weight = 1.8
+            
+        # EĞER Fırsat İlçesindeyse market -> EKSTRA BOOST (Konum analizi için)
+        if ilce_id in opportunity_districts:
+            weight *= 2.5 # Çok ciddi trafik var ama market sayısı az olabilir -> ortalama ciro fırlar
+        
+        market_weights[m_id] = weight
+        prob_weights.append(weight)
+
+    # Olasılıkları normalize et (toplamı 1 olsun)
+    prob_weights = np.array(prob_weights)
+    prob_weights /= prob_weights.sum()
+
+    print(f"Riskli Marketler: {risky_markets}")
+    print(f"Yıldız Marketler: {star_markets}")
 
     sales_list = []
     detail_list = []
@@ -63,18 +119,21 @@ def generate_synthetic_data():
     print(f"{NUM_TRANSACTIONS} adet satış işlemi üretiliyor...")
     
     # --- VERİ ÜRETİM DÖNGÜSÜ ---
-    for _ in tqdm(range(NUM_TRANSACTIONS)):
+    # Market seçimini önceden yap (Vektörize seçim daha hızlıdır ama döngü içinde kalalım şimdilik)
+    # Olasılık dağılımına göre market ID'leri seç
+    chosen_market_indices = np.random.choice(len(all_markets), NUM_TRANSACTIONS, p=prob_weights)
+    
+    for i in tqdm(range(NUM_TRANSACTIONS)):
         random_days = np.random.randint(0, DATE_RANGE)
         transaction_date = START_DATE + timedelta(days=random_days, hours=np.random.randint(8, 22), minutes=np.random.randint(0, 60))
         
-        selected_market_id = np.random.choice(market_ids)
-        selected_ilce_id = markets_data[selected_market_id]
-
-        # Fiyat politikası (Manisa ucuz, Yazın manav ucuz vs.)
-        base_price_factor = 0.95 if selected_ilce_id == manisa_ilce_id else 1.05
-        is_summer = transaction_date.month in [6, 7, 8]
+        # Seçilen market
+        market_idx = chosen_market_indices[i]
+        selected_market_id = all_markets[market_idx][0]
         
-        num_items = np.random.randint(1, 8) 
+        # Sepet büyüklüğü (Adet) - Bazı sepetler tek ürün, bazıları çok
+        # Genelde 1-5 arası, ağırlık 1-3'te
+        num_items = np.random.choice([1, 2, 3, 4, 5, 6], p=[0.3, 0.3, 0.2, 0.1, 0.05, 0.05])
         
         total_tutar = 0
         total_adet = 0
@@ -83,21 +142,18 @@ def generate_synthetic_data():
             selected_product_id = np.random.choice(product_ids)
             cat_id = products_data[selected_product_id]
 
-            season_factor = 1.0
-            if cat_id == 3: # Manav
-                season_factor = 0.8 if is_summer else 1.3
+            # Rastgelelik
+            adet = np.random.randint(1, 4) # 1, 2, 3
             
-            adet = np.random.randint(1, 5)
-            
-            # Fiyat hesapla (Negatif yok)
-            base_price = np.random.uniform(10, 150) * base_price_factor * season_factor
-            birim_fiyat = round(max(0.50, base_price + np.random.normal(0, 2)), 2)
+            # Fiyat
+            base_price = np.random.uniform(20, 200) 
+            birim_fiyat = round(base_price, 2)
             
             item_tutar = round(adet * birim_fiyat, 2)
+            
             total_tutar += item_tutar
             total_adet += adet 
 
-            # Detay tablosu için veri (satis_detay_id YOK, DB verecek)
             detail_list.append((
                 current_satis_id,
                 selected_product_id,
@@ -105,8 +161,6 @@ def generate_synthetic_data():
                 birim_fiyat
             ))
 
-        # Satış tablosu için veri (Header)
-        # DİKKAT: Sütun sırası DataFrame ile aynı olmalı
         sales_list.append((
             current_satis_id,
             selected_market_id,
@@ -117,11 +171,7 @@ def generate_synthetic_data():
         
         current_satis_id += 1
         
-    # DataFrame oluştur
-    # Satislar tablosundaki sütun adlarına tam uyumlu: 'tutar'
     sales_df = pd.DataFrame(sales_list, columns=['satis_id', 'market_id', 'tutar', 'tarih', 'toplam_adet'])
-    
-    # SatisDetay tablosu: 'satis_detay_id' otomatik olduğu için buraya eklemiyoruz.
     detail_df = pd.DataFrame(detail_list, columns=['satis_id', 'urun_id', 'adet', 'birim_fiyat'])
 
     return sales_df, detail_df
