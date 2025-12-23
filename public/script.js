@@ -202,7 +202,11 @@ async function updateDashboard() {
     const market = document.getElementById('marketFilter').value;
     const category = document.getElementById('categoryFilter').value;
 
-    const query = `?ay=${period}&sehir_id=${city}&market_id=${market}&kategori_id=${category}`;
+    // Custom Date Range
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+
+    const query = `?ay=${period}&sehir_id=${city}&market_id=${market}&kategori_id=${category}&startDate=${startDate}&endDate=${endDate}`;
 
     const strategicView = document.getElementById('view-strategic');
     const isStrategicVisible = strategicView && strategicView.style.display !== 'none';
@@ -212,7 +216,7 @@ async function updateDashboard() {
         // User request: "Statejik planlama sayfası için de şehirler filtresi olsun"
         // Implicitly: It ignores the global city filter? Yes.
         const stratCity = document.getElementById('strategicCityFilter').value;
-        const stratQuery = `?ay=${period}&sehir_id=${stratCity}`;
+        const stratQuery = `?ay=${period}&sehir_id=${stratCity}&startDate=${startDate}&endDate=${endDate}`;
         loadStrategicPlanning(stratQuery);
     } else {
         // Load normal dashboard stuff

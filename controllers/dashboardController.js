@@ -2,31 +2,36 @@ const db = require('../config/db');
 const mysql = require('mysql2');
 
 // Helper for Date Filtering
-function buidDateFilter(period) {
-    if (!period || period === 'all') return '';
-    if (period.length === 4) return ` AND YEAR(s.tarih) = ${period}`;
-    return ` AND s.tarih >= DATE_SUB(NOW(), INTERVAL ${period} MONTH)`;
+function buildDateClause(ay, startDate, endDate, prefix = 's') {
+    if (startDate && endDate) {
+        return `${prefix}.tarih BETWEEN ${mysql.escape(startDate)} AND ${mysql.escape(endDate)}`;
+    }
+    if (!ay || ay === 'all') return null;
+    if (ay.length === 4) return `YEAR(${prefix}.tarih) = ${ay}`;
+    return `${prefix}.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`;
 }
 
 // 2. DASHBOARD İSTATİSTİKLERİ
 exports.getStats = (req, res) => {
-    const { ay } = req.query;
-    let dateFilter = buidDateFilter(ay).replace('AND', 'WHERE');
-    if (!dateFilter) dateFilter = '';
+    const { ay, startDate, endDate } = req.query;
+
+    // Construct WHERE clause
+    let dateClause = buildDateClause(ay, startDate, endDate);
+    let whereSql = dateClause ? `WHERE ${dateClause}` : '';
 
     const sqlTotal = `
         SELECT 
             SUM(s.tutar) as toplam_ciro, 
             SUM(s.toplam_adet) as toplam_satis_adedi 
         FROM Satislar s
-        ${dateFilter}
+        ${whereSql}
     `;
 
     const sqlTopMarket = `
         SELECT m.market_ad, SUM(s.tutar) as ciro
         FROM Satislar s
         JOIN Marketler m ON s.market_id = m.market_id
-        ${dateFilter}
+        ${whereSql}
         GROUP BY m.market_ad
         ORDER BY ciro DESC
         LIMIT 1
@@ -37,7 +42,7 @@ exports.getStats = (req, res) => {
         FROM SatisDetay sd
         JOIN Satislar s ON sd.satis_id = s.satis_id
         JOIN Urunler u ON sd.urun_id = u.urun_id
-        ${dateFilter}
+        ${whereSql}
         GROUP BY u.urun_id
         ORDER BY toplam_adet DESC
         LIMIT 1
@@ -52,11 +57,11 @@ exports.getStats = (req, res) => {
             db.query(sqlBestProduct, (err, bestProductResults) => {
                 if (err) return res.status(500).json({ error: err });
 
-                const ciro = totalResults[0].toplam_ciro || 0;
+                const ciro = totalResults[0] ? totalResults[0].toplam_ciro : 0;
 
                 res.json({
-                    toplam_ciro: ciro,
-                    toplam_satis_adedi: totalResults[0].toplam_satis_adedi || 0,
+                    toplam_ciro: ciro || 0,
+                    toplam_satis_adedi: totalResults[0] ? (totalResults[0].toplam_satis_adedi || 0) : 0,
                     en_iyi_sube: topMarketResults.length > 0 ? topMarketResults[0].market_ad : '-',
                     en_cok_satan_urun: bestProductResults.length > 0 ? bestProductResults[0].urun_ad : '-'
                 });
@@ -85,17 +90,14 @@ exports.getFilters = (req, res) => {
 
 // 4. ZAMAN BAZLI SATIŞ GRAFİĞİ
 exports.getSalesOverTime = (req, res) => {
-    const { ay, sehir_id, market_id, kategori_id } = req.query;
+    const { ay, sehir_id, market_id, kategori_id, startDate, endDate } = req.query;
 
     let whereClauses = [];
-    if (ay) {
-        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
-        else if (ay !== 'all') {
-            whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
-        }
-    }
+    let dateClause = buildDateClause(ay, startDate, endDate);
+    if (dateClause) whereClauses.push(dateClause);
 
-    whereClauses.push('s.tarih <= NOW()');
+    // Always show up to now if not specific year/range logic (covered by helper)
+    // whereClauses.push('s.tarih <= NOW()'); // Not strictly needed if data is past only
 
     if (sehir_id && sehir_id !== 'all') whereClauses.push(`m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`);
     if (market_id && market_id !== 'all') whereClauses.push(`s.market_id = ${mysql.escape(market_id)}`);
@@ -127,13 +129,11 @@ exports.getSalesOverTime = (req, res) => {
 
 // 5. ŞUBE ve KATEGORİ BAZLI PASTA GRAFİK VERİLERİ
 exports.getBreakdown = (req, res) => {
-    const { ay, sehir_id, market_id } = req.query;
+    const { ay, sehir_id, market_id, startDate, endDate } = req.query;
 
     let whereClauses = [];
-    if (ay) {
-        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
-        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
-    }
+    let dateClause = buildDateClause(ay, startDate, endDate);
+    if (dateClause) whereClauses.push(dateClause);
 
     if (sehir_id && sehir_id !== 'all') whereClauses.push(`m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`);
     if (market_id && market_id !== 'all') whereClauses.push(`s.market_id = ${mysql.escape(market_id)}`);
@@ -185,7 +185,12 @@ exports.getBreakdown = (req, res) => {
 
 // 6. GELECEK TAHMİNİ (FORECAST) API
 exports.getForecast = (req, res) => {
-    const { ay, sehir_id, market_id, kategori_id } = req.query;
+    const { ay, sehir_id, market_id, kategori_id, startDate, endDate } = req.query;
+
+    // Forecast needs historical context, so we force 24 MONTHS matching the usual structure
+    // but filter later for display if needed.
+    // However, if we want to be smarter, we could base it on the filtered range if it's long enough.
+    // For now, we keep the reliable 24 months for the CALCULATION.
 
     let whereClauses = [];
     whereClauses.push("s.tarih >= DATE_SUB(NOW(), INTERVAL 24 MONTH)");
@@ -251,19 +256,22 @@ exports.getForecast = (req, res) => {
         for (let i = 1; i <= 6; i++) {
             let targetDate = new Date();
             targetDate.setMonth(targetDate.getMonth() + i);
-            let monthStr = targetDate.toISOString().slice(5, 7);
-
-            let pastMonthData = last12Months.find(d => d.ay.endsWith(monthStr));
-            let baseVal = pastMonthData ? parseFloat(pastMonthData.toplam_ciro) : (formattedHistory[formattedHistory.length - 1].ciro);
-
-            let forecastVal = baseVal * (1 + growthRate);
             let dateStr = targetDate.toISOString().slice(0, 7);
+
+            // Simple projection
+            let baseVal = formattedHistory[formattedHistory.length - 1].ciro;
+            // Optionally try to find same month last year for seasonality
+            let forecastVal = baseVal * (1 + growthRate);
+
             forecastData.push({ ay: dateStr, tahmini_ciro: forecastVal });
         }
 
         let displayHistory = formattedHistory;
 
-        if (ay) {
+        // Apply display filter
+        if (startDate && endDate) {
+            displayHistory = formattedHistory.filter(h => h.ay >= startDate.slice(0, 7) && h.ay <= endDate.slice(0, 7));
+        } else if (ay) {
             if (ay.length === 4) {
                 displayHistory = formattedHistory.filter(h => h.ay.startsWith(ay));
             } else if (ay !== 'all') {
@@ -285,16 +293,13 @@ exports.getForecast = (req, res) => {
 
 // 8. STRATEJİK: ŞUBE PERFORMANS MATRİSİ
 exports.getBranchPerformance = (req, res) => {
-    const { ay, sehir_id, kategori_id } = req.query;
+    const { ay, sehir_id, kategori_id, startDate, endDate } = req.query;
 
     let whereClauses = [];
-    if (ay) {
-        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
-        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
-        else whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`);
-    } else {
-        whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`);
-    }
+
+    let dateClause = buildDateClause(ay, startDate, endDate, 's');
+    if (dateClause) whereClauses.push(dateClause);
+    else whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`); // Default if no filter
 
     if (sehir_id && sehir_id !== 'all') whereClauses.push(`s_sehir.sehir_id = ${mysql.escape(sehir_id)}`);
 
@@ -334,7 +339,7 @@ exports.getBranchPerformance = (req, res) => {
 
         let results = branches.map(b => {
             let ciro = parseFloat(b.toplam_ciro);
-            let cityAvg = cityStats[b.sehir_ad].total / cityStats[b.sehir_ad].count;
+            let cityAvg = cityStats[b.sehir_ad] ? (cityStats[b.sehir_ad].total / cityStats[b.sehir_ad].count) : 1;
             let efficiencyScore = (ciro / cityAvg) * 100;
             let recommendation = "NORMAL";
             let status = "success";
@@ -368,16 +373,12 @@ exports.getBranchPerformance = (req, res) => {
 
 // 9. STRATEJİK: LOKASYON ANALİZİ
 exports.getLocationAnalysis = (req, res) => {
-    const { ay, sehir_id } = req.query;
+    const { ay, sehir_id, startDate, endDate } = req.query;
 
     let whereClauses = [];
-    if (ay) {
-        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
-        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
-        else whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 12 MONTH)`);
-    } else {
-        whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 12 MONTH)`);
-    }
+    let dateClause = buildDateClause(ay, startDate, endDate, 's');
+    if (dateClause) whereClauses.push(dateClause);
+    else whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL 12 MONTH)`);
 
     if (sehir_id && sehir_id !== 'all') whereClauses.push(`s_sehir.sehir_id = ${mysql.escape(sehir_id)}`);
 
@@ -410,8 +411,8 @@ exports.getLocationAnalysis = (req, res) => {
 
         let results = districts.map(d => {
             let revenue = parseFloat(d.toplam_bolge_cirosu);
-            let avgRevPerBranch = revenue / d.sube_sayisi;
-            let potentialScore = (avgRevPerBranch / globalAvgPerBranch) * 100;
+            let avgRevPerBranch = d.sube_sayisi > 0 ? (revenue / d.sube_sayisi) : 0;
+            let potentialScore = globalAvgPerBranch > 0 ? (avgRevPerBranch / globalAvgPerBranch) * 100 : 0;
             let recommendation = "Nötr";
             let signal = "secondary";
 
@@ -445,13 +446,30 @@ exports.getLocationAnalysis = (req, res) => {
 
 // 10. TREND ANALİZİ
 exports.getTrendAnalysis = (req, res) => {
-    const { ay, sehir_id } = req.query;
+    const { ay, sehir_id, startDate, endDate } = req.query;
 
     let period = 6;
-    if (ay && ay !== 'all' && ay.length !== 4) period = parseInt(ay);
+    let whereCurrent = [];
+    let wherePrevious = [];
 
-    let whereCurrent = [`s.tarih >= DATE_SUB(NOW(), INTERVAL ${period} MONTH)`];
-    let wherePrevious = [`s.tarih >= DATE_SUB(NOW(), INTERVAL ${period * 2} MONTH)`, `s.tarih < DATE_SUB(NOW(), INTERVAL ${period} MONTH)`];
+    if (startDate && endDate) {
+        // Custom Range Logic for Trend
+        // Current: startDate to endDate
+        // Previous: Same duration before startDate
+        whereCurrent.push(`s.tarih BETWEEN ${mysql.escape(startDate)} AND ${mysql.escape(endDate)}`);
+
+        // Calculate previous range approximately (not perfect but valid for SQL)
+        // We'll use DATEDIFF logic in SQL or just fallback to just "Before Start Date" with same interval.
+        wherePrevious.push(`s.tarih >= DATE_SUB(${mysql.escape(startDate)}, INTERVAL DATEDIFF(${mysql.escape(endDate)}, ${mysql.escape(startDate)}) DAY)`);
+        wherePrevious.push(`s.tarih < ${mysql.escape(startDate)}`);
+
+    } else {
+        if (ay && ay !== 'all' && ay.length !== 4) period = parseInt(ay);
+
+        whereCurrent.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${period} MONTH)`);
+        wherePrevious.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${period * 2} MONTH)`);
+        wherePrevious.push(`s.tarih < DATE_SUB(NOW(), INTERVAL ${period} MONTH)`);
+    }
 
     if (sehir_id && sehir_id !== 'all') {
         const cityFilter = `m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`;
@@ -504,13 +522,12 @@ exports.getTrendAnalysis = (req, res) => {
 
 // 11. EN ÇOK SATAN ÜRÜNLER
 exports.getTopProducts = (req, res) => {
-    const { ay, sehir_id, market_id, kategori_id } = req.query;
+    const { ay, sehir_id, market_id, kategori_id, startDate, endDate } = req.query;
 
     let whereClauses = [];
-    if (ay) {
-        if (ay.length === 4) whereClauses.push(`YEAR(s.tarih) = ${ay}`);
-        else if (ay !== 'all') whereClauses.push(`s.tarih >= DATE_SUB(NOW(), INTERVAL ${ay} MONTH)`);
-    }
+
+    let dateClause = buildDateClause(ay, startDate, endDate);
+    if (dateClause) whereClauses.push(dateClause);
 
     if (sehir_id && sehir_id !== 'all') whereClauses.push(`m.ilce_id IN (SELECT ilce_id FROM Ilceler WHERE sehir_id = ${mysql.escape(sehir_id)})`);
     if (market_id && market_id !== 'all') whereClauses.push(`s.market_id = ${mysql.escape(market_id)}`);

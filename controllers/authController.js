@@ -8,7 +8,11 @@ exports.login = (req, res) => {
         if (err) return res.status(500).json({ error: err });
 
         if (results.length > 0) {
-            res.json({ success: true, message: 'Giriş Başarılı!', user: results[0].ad_soyad || results[0].kullanici_adi });
+            // Updated: Concatenate ad + soyad for frontend compatibility
+            const user = results[0];
+            const fullName = (user.ad && user.soyad) ? `${user.ad} ${user.soyad}` : user.kullanici_adi;
+            
+            res.json({ success: true, message: 'Giriş Başarılı!', user: fullName });
         } else {
             res.json({ success: false, message: 'Kullanıcı adı veya şifre hatalı!' });
         }

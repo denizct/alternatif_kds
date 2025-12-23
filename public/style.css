@@ -276,6 +276,31 @@ body {
     border-color: var(--text-secondary);
 }
 
+/* Date Input Styling to match Select */
+.date-input {
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 10px 14px;
+    border-radius: 8px;
+    outline: none;
+    font-size: 14px;
+    transition: 0.2s;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+}
+
+.date-input:hover,
+.date-input:focus {
+    border-color: var(--text-secondary);
+}
+
+/* Remove default date picker icon filter invert if needed or custom style */
+::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+}
+
 /* Unified Button Style */
 .filter-bar button {
     background: linear-gradient(135deg, var(--accent-color), var(--accent-hover)) !important;
