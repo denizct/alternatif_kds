@@ -388,6 +388,7 @@ exports.getLocationAnalysis = (req, res) => {
         SELECT 
             i.ilce_ad,
             s_sehir.sehir_ad,
+            i.nufus,
             COUNT(DISTINCT m.market_id) as sube_sayisi,
             SUM(s.tutar) as toplam_bolge_cirosu
         FROM Satislar s
@@ -395,51 +396,77 @@ exports.getLocationAnalysis = (req, res) => {
         JOIN Ilceler i ON m.ilce_id = i.ilce_id
         JOIN Sehirler s_sehir ON i.sehir_id = s_sehir.sehir_id
         ${whereSql}
-        GROUP BY i.ilce_id, i.ilce_ad, s_sehir.sehir_ad
+        GROUP BY i.ilce_id, i.ilce_ad, s_sehir.sehir_ad, i.nufus
     `;
 
     db.query(sql, (err, districts) => {
         if (err) return res.status(500).json({ error: err });
 
+        // 1. Calculate Global Averages for Baseline
         let totalRevenue = 0;
-        let totalBranches = 0;
+        let totalPopulation = 0;
         districts.forEach(d => {
             totalRevenue += parseFloat(d.toplam_bolge_cirosu);
-            totalBranches += d.sube_sayisi;
+            totalPopulation += parseInt(d.nufus || 0);
         });
-        let globalAvgPerBranch = totalBranches > 0 ? (totalRevenue / totalBranches) : 0;
+
+        // Avoid division by zero
+        let globalRevPerCapita = totalPopulation > 0 ? (totalRevenue / totalPopulation) : 1;
 
         let results = districts.map(d => {
             let revenue = parseFloat(d.toplam_bolge_cirosu);
-            let avgRevPerBranch = d.sube_sayisi > 0 ? (revenue / d.sube_sayisi) : 0;
-            let potentialScore = globalAvgPerBranch > 0 ? (avgRevPerBranch / globalAvgPerBranch) * 100 : 0;
+            let population = parseInt(d.nufus || 1); // Default to 1 to avoid NaN
+
+            // "Kişi Başı Ciro" (Penetration)
+            let revPerCapita = revenue / population;
+
+            // Penetration Index (100 is average)
+            // If Index is LOW (e.g. 20), it means we are underperforming relative to population size -> OPPORTUNITY
+            let penetrationIndex = (revPerCapita / globalRevPerCapita) * 100;
+
             let recommendation = "Nötr";
             let signal = "secondary";
 
-            if (potentialScore > 140) {
-                recommendation = "YÜKSEK POTANSİYEL - Yeni Şube Aç!";
-                signal = "success";
-            } else if (potentialScore > 110) {
-                recommendation = "FIRSAT OLABİLİR";
+            // LOGIC: High Population + Low Penetration = HIGH OPPORTUNITY
+            if (population > 250000 && penetrationIndex < 60) {
+                recommendation = "YÜKSEK FIRSAT (Potansiyel Yüksek)";
+                signal = "success"; // Green because it's an opportunity to grow
+            }
+            // LOGIC: Very High Penetration = SATURATED
+            else if (penetrationIndex > 150) {
+                recommendation = "DOYGUN PAZAR (Maksimize)";
+                signal = "danger"; // Red/Orange warning against over-investment
+            }
+            // MODERATE
+            else if (penetrationIndex < 80) {
+                recommendation = "Gelişime Açık";
                 signal = "info";
-            } else if (potentialScore < 60) {
-                recommendation = "DOYGUN PAZAR - Yatırım Yapma";
-                signal = "danger";
             }
 
             return {
                 ilce: d.ilce_ad,
                 sehir: d.sehir_ad,
+                nufus: population,
                 sube_sayisi: d.sube_sayisi,
                 bolge_cirosu: revenue,
-                sube_basi_ciro: avgRevPerBranch,
-                potansiyel_skoru: potentialScore.toFixed(0),
+                kisi_basi_ciro: revPerCapita.toFixed(2),
+                potansiyel_skoru: penetrationIndex.toFixed(0), // Low score here actually means High Potential for growth, but let's keep the user's label simple
                 recommendation: recommendation,
                 signal: signal
             };
         });
 
-        results.sort((a, b) => b.potansiyel_skoru - a.potansiyel_skoru);
+        // Sort by Opportunity (Lower Penetration = Higher Rank for "Opportunity" view?)
+        // Or user wants "High Opportunity" first. 
+        // Our logic: "YÜKSEK FIRSAT" is signal='success'. 
+        // Let's sort logic: 
+        // 1. Success (High Opp)
+        // 2. Info
+        // 3. Secondary
+        // 4. Danger (Saturated)
+        const signalOrder = { 'success': 4, 'info': 3, 'secondary': 2, 'danger': 1 };
+        results.sort((a, b) => signalOrder[b.signal] - signalOrder[a.signal]);
+
         res.json(results);
     });
 };
