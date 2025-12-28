@@ -1,7 +1,9 @@
-Chart.defaults.color = '#000000';
-Chart.defaults.borderColor = '#e5e7eb';
-Chart.defaults.font.size = 14;
-Chart.defaults.font.weight = 'bold';
+if (typeof Chart !== 'undefined') {
+    Chart.defaults.color = '#000000';
+    Chart.defaults.borderColor = '#e5e7eb';
+    Chart.defaults.font.size = 14;
+    Chart.defaults.font.weight = 'bold';
+}
 
 const API_URL = 'http://localhost:3000/api';
 
@@ -229,7 +231,7 @@ function renderDonut(categories) {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: { position: 'right', labels: { color: '#cbd5e1', font: { size: 12 } } },
+                legend: { position: 'right', labels: { color: '#000000', font: { size: 12, weight: 'bold' } } },
                 // Enable Percentages Inside
                 datalabels: {
                     color: '#ffffff',
@@ -247,7 +249,8 @@ function renderDonut(categories) {
                 }
             },
             cutout: '60%' // Sligthly thicker donut for labels
-        }
+        },
+        plugins: [ChartDataLabels] // Explicitly enable plugin here
     });
 }
 
@@ -295,7 +298,7 @@ function renderBar(markets) {
             },
             scales: {
                 x: { display: false }, // Clean look
-                y: { grid: { display: false }, ticks: { color: '#cbd5e1' } }
+                y: { grid: { display: false }, ticks: { color: '#000000', font: { weight: 'bold' } } }
             }
         }
     });
@@ -320,18 +323,22 @@ function renderTopList(products) {
     });
 }
 
-// CHART.JS OKUNABİLİRLİK ZORLAMASI (Global Black)
-Chart.defaults.color = '#000000';
-Chart.defaults.font.weight = 'bold';
-Chart.defaults.font.size = 14;
+// CHART.JS READING FIX (Global Black) - Only if Chart exists
+if (typeof Chart !== 'undefined') {
+    Chart.defaults.color = '#000000';
+    Chart.defaults.font.weight = 'bold';
+    Chart.defaults.font.size = 14;
 
-// Eksenlerdeki (X ve Y) sayıların rengi
-Chart.defaults.scale.ticks.color = '#000000';
-Chart.defaults.scale.ticks.font.weight = 'bold';
+    // Eksenlerdeki (X ve Y) sayıların rengi
+    if (Chart.defaults.scale) {
+        Chart.defaults.scale.ticks.color = '#000000';
+        Chart.defaults.scale.ticks.font.weight = 'bold';
+    }
 
-// Lejant (Legend) etiketlerinin rengi
-Chart.defaults.plugins.legend.labels.color = '#000000';
-Chart.defaults.plugins.legend.title.color = '#000000';
+    // Lejant (Legend) etiketlerinin rengi
+    Chart.defaults.plugins.legend.labels.color = '#000000';
+    Chart.defaults.plugins.legend.title.color = '#000000';
+}
 
 // === STRATEGIC PAGE LOGIC (Kept Separate) ===
 async function loadStrategicPlanning() {
@@ -414,9 +421,9 @@ async function loadStrategicPlanning() {
             } else if (l.signal === 'danger') {
                 badgeClass = 'badge-doygun'; // Red
                 borderColor = '#ef4444';
-            } else if (l.recommendation.toUpperCase().includes('GELİŞİME')) {
-                badgeClass = 'badge-gelisim'; // Orange
-                borderColor = '#f97316'; // Force Vivid Orange Border
+            } else if (l.recommendation.toLocaleUpperCase('tr-TR').includes('GELİŞİME')) {
+                badgeClass = 'badge-gelisim'; // Purple (Matches Table)
+                borderColor = '#7c3aed'; // Purple Border
             }
 
             locContainer.innerHTML += `
@@ -429,7 +436,7 @@ async function loadStrategicPlanning() {
                             </span>
                         </div>
                         <div style="font-size:12px; color:#000; margin-top:2px;">
-                            Kişi Başı Ciro: <strong>₺${l.kisi_basi_ciro}</strong>
+                            <i class="fas fa-wallet" style="color:#4f46e5"></i> Bölgesel Harcama İndeksi: <strong>₺${l.kisi_basi_ciro}</strong>
                         </div>
                     </div>
                     <div style="text-align:right;">
