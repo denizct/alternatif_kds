@@ -9,6 +9,7 @@ require('./config/db');
 // Import Routes
 const authRoutes = require('./routes/authRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const productRoutes = require('./routes/productRoutes');
 
 const app = express();
 
@@ -22,6 +23,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // API Routes
 app.use('/api', authRoutes);
 app.use('/api', dashboardRoutes);
+app.use('/api', productRoutes);
 
 // Root Route (Redirect to index.html)
 app.get('/', (req, res) => {
